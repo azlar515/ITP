@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import "./styles.css";
 
-const API = "http://127.0.0.1:8000/api";
+const API = "/api";
 const ADMIN_PASSWORD = "Admin";
 
 function headers(role, user = "web") {
