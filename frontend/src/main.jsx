@@ -425,14 +425,15 @@ function App() {
   }
 
   async function deleteItpItem(item) {
-    if (!window.confirm(`Delete ITP item ${item.code}?`)) return;
-    await request(`/itp-items/${item.id}`, {
+    if (!window.confirm(`Permanently delete ITP item ${item.code}? This will also delete its UID, inspection records, and status event history. Items with child items cannot be deleted.`)) return;
+    const result = await request(`/itp-items/${item.id}`, {
       method: "DELETE",
       headers: headers(authToken),
     });
-    await loadProjectData(projectId);
+    await loadProjectData(projectId, { preserveAdminExpanded: true });
+    await loadProgress(shipId);
     await loadOverview();
-    setMessage(`Deleted ITP item ${item.code}.`);
+    setMessage(`Permanently deleted ${item.code}. Removed ${result.progress_deleted ?? 0} progress record(s) and ${result.events_deleted ?? 0} event(s).`);
   }
 
   function startEditItpItem(item) {

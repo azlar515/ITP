@@ -17,7 +17,7 @@ from openpyxl.styles import Font, PatternFill
 from sqlalchemy.orm import Session
 
 from .database import Base, SessionLocal, engine, get_db
-from .models import AuditLog, ItpItem, Project, Ship, ShipProgress, ShipProgressEvent
+from .models import AuditLog, ItpItem, ItpVersionItem, Project, Ship, ShipProgress, ShipProgressEvent
 from .schemas import (
     AuditLogOut,
     ImportPreview,
@@ -567,11 +567,22 @@ def delete_itp_item(item_id: int, db: Session = Depends(get_db), current_actor: 
     if item is None:
         raise HTTPException(status_code=404, detail="ITP item not found.")
     has_children = db.query(ItpItem).filter(ItpItem.parent_id == item.id).first() is not None
-    has_progress = db.query(ShipProgress).filter((ShipProgress.itp_item_id == item.id) | (ShipProgress.item_uid == item.item_uid)).first() is not None
-    if has_children or has_progress:
-        raise HTTPException(status_code=400, detail="This ITP item has children or progress records. Delete those dependencies first.")
+    if has_children:
+        raise HTTPException(status_code=400, detail="This ITP item has child items. Delete the child items first.")
     project_id = item.project_id
+    item_uid = item.item_uid
     before = snapshot_item(item)
+    progress_count = (
+        db.query(ShipProgress)
+        .filter((ShipProgress.itp_item_id == item.id) | (ShipProgress.item_uid == item_uid))
+        .delete(synchronize_session=False)
+    )
+    event_count = (
+        db.query(ShipProgressEvent)
+        .filter((ShipProgressEvent.itp_item_id == item.id) | (ShipProgressEvent.item_uid == item_uid))
+        .delete(synchronize_session=False)
+    )
+    version_item_count = db.query(ItpVersionItem).filter(ItpVersionItem.item_uid == item_uid).delete(synchronize_session=False)
     db.delete(item)
     db.flush()
     remaining = db.query(ItpItem).filter(ItpItem.project_id == project_id).all()
@@ -580,17 +591,27 @@ def delete_itp_item(item_id: int, db: Session = Depends(get_db), current_actor: 
         db,
         entity_type="itp_item",
         entity_id=item_id,
-        action="delete",
-        summary=f"Deleted ITP item {before['code']}",
+        action="delete_permanent",
+        summary=f"Permanently deleted ITP item {before['code']} with {progress_count} progress record(s), {event_count} event(s), and {version_item_count} version snapshot(s)",
         actor=current_actor,
-        before=before,
+        before={
+            "id": before["id"],
+            "project_id": before["project_id"],
+            "code": before["code"],
+            "title_zh": before["title_zh"],
+            "title_en": before["title_en"],
+            "level": before["level"],
+            "progress_count": progress_count,
+            "event_count": event_count,
+            "version_item_count": version_item_count,
+        },
         after=None,
     )
     project = db.get(Project, project_id)
     if project:
         create_itp_version_snapshot(db, project, current_actor, "manual_delete")
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "action": "delete_permanent", "affected": 1, "progress_deleted": progress_count, "events_deleted": event_count}
 
 
 @app.post("/api/import/preview", response_model=ImportPreview, dependencies=[Depends(require_admin)])
@@ -1275,6 +1296,8 @@ def rollback_history(audit_id: int, db: Session = Depends(get_db), current_actor
         raise HTTPException(status_code=404, detail="History record not found.")
     if audit.action == "rollback":
         raise HTTPException(status_code=400, detail="Rollback records cannot be rolled back.")
+    if audit.action == "delete_permanent":
+        raise HTTPException(status_code=400, detail="Permanent delete records cannot be rolled back.")
 
     before = audit_snapshot(audit.before_json)
     after = audit_snapshot(audit.after_json)
