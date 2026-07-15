@@ -397,18 +397,51 @@ def update_itp_item(item_id: int, payload: ItpItemUpdate, db: Session = Depends(
     if item is None:
         raise HTTPException(status_code=404, detail="ITP item not found.")
     before = snapshot_item(item)
-    if payload.code is not None:
-        item.code = payload.code.strip()
-    if payload.title_zh is not None:
-        item.title_zh = payload.title_zh.strip() or None
-    if payload.title_en is not None:
-        item.title_en = payload.title_en.strip()
-    if payload.parent_code is not None:
-        parent = db.query(ItpItem).filter(ItpItem.project_id == item.project_id, ItpItem.code == payload.parent_code, ItpItem.active == True).one_or_none()
-        if parent is None:
-            raise HTTPException(status_code=400, detail="Parent code was not found in this project.")
-        item.parent_code = payload.parent_code
-        item.parent_id = parent.id
+    fields = payload.model_fields_set
+    old_code = item.code
+
+    if "code" in fields:
+        next_code = (payload.code or "").strip()
+        if not next_code:
+            raise HTTPException(status_code=400, detail="Current code cannot be empty.")
+        duplicate = (
+            db.query(ItpItem)
+            .filter(ItpItem.project_id == item.project_id, ItpItem.code == next_code, ItpItem.id != item.id)
+            .first()
+        )
+        if duplicate is not None:
+            raise HTTPException(status_code=400, detail="Current code already exists in this project.")
+        item.code = next_code
+    if "title_zh" in fields:
+        item.title_zh = (payload.title_zh or "").strip() or None
+    if "title_en" in fields:
+        next_title_en = (payload.title_en or "").strip()
+        if not next_title_en:
+            raise HTTPException(status_code=400, detail="English description cannot be empty.")
+        item.title_en = next_title_en
+    if "parent_code" in fields:
+        next_parent_code = (payload.parent_code or "").strip() or None
+        if next_parent_code is None:
+            item.parent_code = None
+            item.parent_id = None
+        else:
+            parent = (
+                db.query(ItpItem)
+                .filter(ItpItem.project_id == item.project_id, ItpItem.code == next_parent_code, ItpItem.active == True)
+                .one_or_none()
+            )
+            if parent is None:
+                raise HTTPException(status_code=400, detail="Parent code was not found as an active item in this project.")
+            descendant_ids = {row.id for row in collect_descendant_items(db, item)}
+            if parent.id in descendant_ids:
+                raise HTTPException(status_code=400, detail="An ITP item cannot be moved under itself or one of its descendants.")
+            item.parent_code = next_parent_code
+            item.parent_id = parent.id
+            item.parent_uid = parent.item_uid
+    if old_code != item.code:
+        for child in db.query(ItpItem).filter(ItpItem.project_id == item.project_id, ItpItem.id != item.id).all():
+            if child.parent_id == item.id or child.parent_code == old_code:
+                child.parent_code = item.code
     if payload.is_inspection is not None:
         item.is_inspection = payload.is_inspection
     if payload.sort_order is not None:
@@ -417,6 +450,9 @@ def update_itp_item(item_id: int, payload: ItpItemUpdate, db: Session = Depends(
     db.flush()
     items = db.query(ItpItem).filter(ItpItem.project_id == item.project_id).all()
     resolve_levels_and_leaf_flags(items)
+    active_over_depth = [row.code for row in items if row.active and row.level > 5]
+    if active_over_depth:
+        raise HTTPException(status_code=400, detail=f"Move would create levels deeper than level 5: {', '.join(active_over_depth[:5])}")
     write_audit(
         db,
         entity_type="itp_item",

@@ -83,6 +83,8 @@ function App() {
   const [editingShipId, setEditingShipId] = useState(null);
   const [shipDraft, setShipDraft] = useState({ hull_no: "", name: "" });
   const [newItem, setNewItem] = useState({ parent_code: "", code: "", title_zh: "", title_en: "" });
+  const [editingItpItemId, setEditingItpItemId] = useState(null);
+  const [itpItemDraft, setItpItemDraft] = useState({ parent_code: "", code: "", title_zh: "", title_en: "" });
   const [expanded, setExpanded] = useState({});
   const [adminExpanded, setAdminExpanded] = useState({});
 
@@ -94,6 +96,7 @@ function App() {
   const itpPercent = progress.length ? Math.round((itpDone / progress.length) * 100) : 0;
   const selectedProject = projects.find((project) => String(project.id) === String(projectId));
   const selectedShip = ships.find((ship) => String(ship.id) === String(shipId));
+  const editingItpItem = flatTree.find((item) => item.id === editingItpItemId);
   const isMainEditingShip = page === "main" && mainEditShipId && String(mainEditShipId) === String(shipId);
   const overviewShips = useMemo(
     () => [...(overview?.ships || [])].sort((left, right) => {
@@ -430,6 +433,42 @@ function App() {
     await loadProjectData(projectId);
     await loadOverview();
     setMessage(`Deleted ITP item ${item.code}.`);
+  }
+
+  function startEditItpItem(item) {
+    setEditingItpItemId(item.id);
+    setItpItemDraft({
+      parent_code: item.parent_code || "",
+      code: item.code,
+      title_zh: item.title_zh || "",
+      title_en: item.title_en || "",
+    });
+  }
+
+  async function saveItpItem(item) {
+    if (!itpItemDraft.code.trim()) {
+      setMessage("Current code cannot be empty.");
+      return;
+    }
+    if (!itpItemDraft.title_en.trim()) {
+      setMessage("English description cannot be empty.");
+      return;
+    }
+    const updated = await request(`/itp-items/${item.id}`, {
+      method: "PUT",
+      headers: headers(authToken),
+      body: JSON.stringify({
+        parent_code: itpItemDraft.parent_code.trim() || null,
+        code: itpItemDraft.code.trim(),
+        title_zh: itpItemDraft.title_zh.trim() || null,
+        title_en: itpItemDraft.title_en.trim(),
+      }),
+    });
+    setEditingItpItemId(null);
+    await loadProjectData(projectId, { preserveAdminExpanded: true });
+    await loadProgress(shipId);
+    await loadOverview();
+    setMessage(`Updated ITP item ${updated.code}.`);
   }
 
   async function toggleBeforeSeaTrial(item) {
@@ -814,50 +853,66 @@ function App() {
                   .map((item) => {
                     const hasChildren = flatTree.some((candidate) => candidate.parent_id === item.id);
                     const isOpen = adminExpanded[item.id] ?? false;
+                    const isEditing = editingItpItemId === item.id;
                     return (
-                      <div
-                        className={`tree-row ${item.is_inspection ? "leaf" : ""} ${hasChildren ? "clickable" : ""} ${item.active === false ? "inactive" : ""}`}
-                        key={item.id}
-                        style={{ paddingLeft: `${12 + item.depth * 22}px` }}
-                        onClick={() => {
-                          if (hasChildren) setAdminExpanded({ ...adminExpanded, [item.id]: !isOpen });
-                        }}
-                        title={hasChildren ? "Click to expand or collapse" : undefined}
-                      >
-                        <code>{item.code}</code>
-                        <span>{item.title_en}<small>{item.title_zh ? ` / ${item.title_zh}` : ""}</small></span>
-                        <small>{item.active === false ? "Inactive" : hasChildren ? (isOpen ? "Open" : "Closed") : `L${item.level}`}</small>
-                        <button
-                          className={`mark-button ${item.before_sea_trial ? "active" : ""}`}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            toggleBeforeSeaTrial(item).catch((error) => setMessage(error.message));
+                      <React.Fragment key={item.id}>
+                        <div
+                          className={`tree-row ${item.is_inspection ? "leaf" : ""} ${hasChildren ? "clickable" : ""} ${item.active === false ? "inactive" : ""}`}
+                          style={{ paddingLeft: `${12 + item.depth * 22}px` }}
+                          onClick={() => {
+                            if (hasChildren) setAdminExpanded({ ...adminExpanded, [item.id]: !isOpen });
                           }}
-                          title="Toggle Items before sea trial"
+                          title={hasChildren ? "Click to expand or collapse" : undefined}
                         >
-                          <Flag size={14} />
-                        </button>
-                        <button
-                          className={`icon-button ${item.active === false ? "active" : ""}`}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            toggleItemActive(item).catch((error) => setMessage(error.message));
-                          }}
-                          title={item.active === false ? "Restore ITP item" : "Deactivate ITP item"}
-                        >
-                          <Power size={14} />
-                        </button>
-                        <button
-                          className="icon-danger"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            deleteItpItem(item).catch((error) => setMessage(error.message));
-                          }}
-                          title="Delete ITP item"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
+                          <code>{item.code}</code>
+                          <span>{item.title_en}<small>{item.title_zh ? ` / ${item.title_zh}` : ""}</small></span>
+                          <small>{item.active === false ? "Inactive" : hasChildren ? (isOpen ? "Open" : "Closed") : `L${item.level}`}</small>
+                          <button
+                            className={`icon-button ${isEditing ? "active" : ""}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (isEditing) {
+                                setEditingItpItemId(null);
+                              } else {
+                                startEditItpItem(item);
+                              }
+                            }}
+                            title="Edit ITP item"
+                          >
+                            <Pencil size={14} />
+                          </button>
+                          <button
+                            className={`mark-button ${item.before_sea_trial ? "active" : ""}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              toggleBeforeSeaTrial(item).catch((error) => setMessage(error.message));
+                            }}
+                            title="Toggle Items before sea trial"
+                          >
+                            <Flag size={14} />
+                          </button>
+                          <button
+                            className={`icon-button ${item.active === false ? "active" : ""}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              toggleItemActive(item).catch((error) => setMessage(error.message));
+                            }}
+                            title={item.active === false ? "Restore ITP item" : "Deactivate ITP item"}
+                          >
+                            <Power size={14} />
+                          </button>
+                          <button
+                            className="icon-danger"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              deleteItpItem(item).catch((error) => setMessage(error.message));
+                            }}
+                            title="Delete ITP item"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </React.Fragment>
                     );
                   })}
               </div>
@@ -938,6 +993,40 @@ function App() {
             </div>
           </section>
         </>
+      )}
+      {editingItpItem && (
+        <div className="modal-backdrop" onClick={() => setEditingItpItemId(null)}>
+          <div className="modal-panel" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-title">
+              <div>
+                <h2>Edit ITP Item</h2>
+                <span>{editingItpItem.code}</span>
+              </div>
+              <button className="soft-button" onClick={() => setEditingItpItemId(null)}>Cancel</button>
+            </div>
+            <div className="itp-edit-form">
+              <label>
+                <span>Parent Code</span>
+                <input placeholder="Parent code" value={itpItemDraft.parent_code} onChange={(event) => setItpItemDraft({ ...itpItemDraft, parent_code: event.target.value })} />
+              </label>
+              <label>
+                <span>Current Code</span>
+                <input placeholder="Current code" value={itpItemDraft.code} onChange={(event) => setItpItemDraft({ ...itpItemDraft, code: event.target.value })} />
+              </label>
+              <label>
+                <span>Chinese Description</span>
+                <input placeholder="Chinese description" value={itpItemDraft.title_zh} onChange={(event) => setItpItemDraft({ ...itpItemDraft, title_zh: event.target.value })} />
+              </label>
+              <label>
+                <span>English Description</span>
+                <input placeholder="English description" value={itpItemDraft.title_en} onChange={(event) => setItpItemDraft({ ...itpItemDraft, title_en: event.target.value })} />
+              </label>
+            </div>
+            <div className="modal-actions">
+              <button onClick={() => saveItpItem(editingItpItem).catch((error) => setMessage(error.message))}><CheckCircle2 size={16} /> Save</button>
+            </div>
+          </div>
+        </div>
       )}
     </main>
   );
