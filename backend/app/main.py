@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 from datetime import datetime
 from io import BytesIO
 from urllib.parse import quote
@@ -168,6 +169,25 @@ def login(payload: LoginRequest):
     raise HTTPException(status_code=401, detail="Invalid password.")
 
 
+CODE_PART_RE = re.compile(r"\d+|\D+")
+
+
+def natural_code_key(code: str | None) -> tuple:
+    parts = CODE_PART_RE.findall(code or "")
+    return tuple((0, int(part)) if part.isdigit() else (1, part.lower()) for part in parts)
+
+
+def item_code_key(item: ItpItem | ItpItemOut) -> tuple:
+    return natural_code_key(item.code)
+
+
+def sort_tree_nodes(nodes: list[ItpItemOut]) -> list[ItpItemOut]:
+    nodes.sort(key=item_code_key)
+    for node in nodes:
+        sort_tree_nodes(node.children)
+    return nodes
+
+
 def build_tree(items: list[ItpItem]) -> list[ItpItemOut]:
     out_by_id = {
         item.id: ItpItemOut(
@@ -194,7 +214,7 @@ def build_tree(items: list[ItpItem]) -> list[ItpItemOut]:
             out_by_id[item.parent_id].children.append(node)
         else:
             roots.append(node)
-    return roots
+    return sort_tree_nodes(roots)
 
 
 def apply_item_snapshot(item: ItpItem, snapshot: dict) -> None:
@@ -336,7 +356,10 @@ def export_project_itp(project_id: int, db: Session = Depends(get_db)):
     project = db.get(Project, project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found.")
-    items = db.query(ItpItem).filter(ItpItem.project_id == project_id, ItpItem.active == True).order_by(ItpItem.sort_order, ItpItem.code).all()
+    items = sorted(
+        db.query(ItpItem).filter(ItpItem.project_id == project_id, ItpItem.active == True).all(),
+        key=item_code_key,
+    )
 
     workbook = Workbook()
     sheet = workbook.active
@@ -684,7 +707,10 @@ def get_ship_progress(ship_id: int, db: Session = Depends(get_db)):
     ship = db.get(Ship, ship_id)
     if ship is None:
         raise HTTPException(status_code=404, detail="Ship not found.")
-    items = db.query(ItpItem).filter(ItpItem.project_id == ship.project_id, ItpItem.is_inspection == True, ItpItem.active == True).order_by(ItpItem.sort_order, ItpItem.code).all()
+    items = sorted(
+        db.query(ItpItem).filter(ItpItem.project_id == ship.project_id, ItpItem.is_inspection == True, ItpItem.active == True).all(),
+        key=item_code_key,
+    )
     progress_rows = db.query(ShipProgress).filter(ShipProgress.ship_id == ship_id).all()
     progress_by_uid = {row.item_uid: row for row in progress_rows if row.item_uid}
     progress_by_item = {row.itp_item_id: row for row in progress_rows}
@@ -714,7 +740,10 @@ def export_ship_records(ship_id: int, db: Session = Depends(get_db)):
     if ship is None:
         raise HTTPException(status_code=404, detail="Ship not found.")
     project = db.get(Project, ship.project_id)
-    items = db.query(ItpItem).filter(ItpItem.project_id == ship.project_id, ItpItem.is_inspection == True, ItpItem.active == True).order_by(ItpItem.sort_order, ItpItem.code).all()
+    items = sorted(
+        db.query(ItpItem).filter(ItpItem.project_id == ship.project_id, ItpItem.is_inspection == True, ItpItem.active == True).all(),
+        key=item_code_key,
+    )
     progress_rows = db.query(ShipProgress).filter(ShipProgress.ship_id == ship_id).all()
     progress_by_uid = {row.item_uid: row for row in progress_rows if row.item_uid}
     progress_by_item = {row.itp_item_id: row for row in progress_rows}
@@ -1150,11 +1179,9 @@ def unfinished_before_sea_trial(ship_id: int, db: Session = Depends(get_db)):
     if ship is None:
         raise HTTPException(status_code=404, detail="Ship not found.")
     project = db.get(Project, ship.project_id)
-    project_items = (
-        db.query(ItpItem)
-        .filter(ItpItem.project_id == ship.project_id, ItpItem.active == True)
-        .order_by(ItpItem.sort_order, ItpItem.code)
-        .all()
+    project_items = sorted(
+        db.query(ItpItem).filter(ItpItem.project_id == ship.project_id, ItpItem.active == True).all(),
+        key=item_code_key,
     )
     items_by_id = {item.id: item for item in project_items}
     inspection_items = [
