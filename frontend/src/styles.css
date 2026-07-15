@@ -203,7 +203,10 @@ code {
 }
 
 .metric-card,
-.overview-table {
+.overview-table,
+.overview-board,
+.ship-card,
+.sea-trial-detail {
   background: white;
   border: 1px solid #d8e0ea;
   border-radius: 8px;
@@ -244,6 +247,156 @@ code {
   font-weight: 600;
 }
 
+.overview-board {
+  display: grid;
+  gap: 14px;
+}
+
+.ship-card-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.ship-card {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.ship-card.selected {
+  border-color: #38bdf8;
+  box-shadow: 0 0 0 2px #e0f2fe;
+}
+
+.ship-card-title {
+  align-items: start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.ship-card-title h3 {
+  font-size: 18px;
+  margin: 0;
+}
+
+.ship-card-title span,
+.ship-card-title small {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.overview-progress {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  display: grid;
+  gap: 9px;
+  padding: 10px;
+}
+
+.overview-progress.primary {
+  border-color: #bae6fd;
+  background: #f0f9ff;
+}
+
+.overview-progress > div:first-child,
+.overview-progress-footer {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.overview-progress span,
+.overview-progress small {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.overview-progress strong {
+  color: #1f2933;
+  font-size: 14px;
+}
+
+.compact-button {
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 10px;
+}
+
+.sea-trial-detail {
+  display: grid;
+  gap: 12px;
+}
+
+.open-group-list {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  display: grid;
+  overflow: hidden;
+}
+
+.open-group {
+  border-top: 1px solid #e2e8f0;
+  display: grid;
+}
+
+.open-group:first-child {
+  border-top: 0;
+}
+
+.open-group h3,
+.open-subgroup h4 {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  margin: 0;
+}
+
+.open-group h3 {
+  background: #f8fafc;
+  font-size: 14px;
+  padding: 10px 12px;
+}
+
+.open-subgroup h4 {
+  background: #fbfdff;
+  border-top: 1px solid #edf2f7;
+  color: #334155;
+  font-size: 13px;
+  padding: 8px 12px 8px 28px;
+}
+
+.open-group h3 span,
+.open-subgroup h4 span,
+.open-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.open-group h3 small,
+.open-subgroup h4 small,
+.open-item span small {
+  color: #64748b;
+}
+
+.open-item {
+  align-items: center;
+  border-top: 1px solid #edf2f7;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-height: 38px;
+  padding: 7px 12px 7px 44px;
+}
+
+.empty-state.compact {
+  min-height: 80px;
+}
+
 .selector-band {
   background: white;
   border: 1px solid #d8e0ea;
@@ -262,6 +415,77 @@ code {
 .selector-band label span {
   color: #536170;
   font-size: 13px;
+}
+
+.main-page .selector-band {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.ship-select-board {
+  background: white;
+  border: 1px solid #d8e0ea;
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+}
+
+.edit-card {
+  cursor: pointer;
+  min-height: 124px;
+  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+.edit-card .ship-card-title {
+  align-items: center;
+  min-height: 92px;
+}
+
+.edit-card .ship-card-title h3 {
+  font-size: 34px;
+  line-height: 1;
+}
+
+.edit-card .ship-card-title span,
+.edit-card .ship-card-title small {
+  font-size: 13px;
+}
+
+.edit-card:hover {
+  border-color: #38bdf8;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+  transform: translateY(-1px);
+}
+
+.editing-context {
+  align-items: center;
+  background: #f0f9ff;
+  border: 1px solid #7dd3fc;
+  border-radius: 8px;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  position: sticky;
+  top: 12px;
+  z-index: 4;
+}
+
+.editing-context > div {
+  display: grid;
+  gap: 3px;
+}
+
+.editing-context span,
+.editing-context small {
+  color: #0369a1;
+  font-size: 13px;
+}
+
+.editing-context strong {
+  color: #0f172a;
+  font-size: 18px;
 }
 
 .itp-browser {

@@ -218,7 +218,7 @@ def resolve_levels_and_leaf_flags(items: list[ItpItem]) -> None:
         item.parent_id = by_code[item.parent_code].id if item.parent_code in by_code else None
         item.parent_uid = by_code[item.parent_code].item_uid if item.parent_code in by_code else None
         item.level = level_for(item)
-        item.is_inspection = item.level >= 5 and item.code not in child_parent_codes
+        item.is_inspection = item.level == 5 and item.code not in child_parent_codes
 
 
 def create_itp_version_snapshot(db: Session, project: Project, actor: str, source: str) -> ItpVersion:

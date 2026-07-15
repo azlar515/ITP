@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronRight,
   Download,
+  Eye,
   GitCompareArrows,
   BarChart3,
   History,
@@ -63,9 +64,12 @@ function App() {
   const [tree, setTree] = useState([]);
   const [ships, setShips] = useState([]);
   const [shipId, setShipId] = useState("");
+  const [mainEditShipId, setMainEditShipId] = useState("");
   const [progress, setProgress] = useState([]);
   const [historyRows, setHistoryRows] = useState([]);
   const [overview, setOverview] = useState(null);
+  const [seaTrialDetail, setSeaTrialDetail] = useState(null);
+  const [seaTrialDetailShipId, setSeaTrialDetailShipId] = useState(null);
   const [message, setMessage] = useState("");
   const [preview, setPreview] = useState(null);
   const [selectedFile, setSelectedFile] = useState(null);
@@ -91,6 +95,23 @@ function App() {
   const mooringPercent = mooringItems.length ? Math.round((mooringDone / mooringItems.length) * 100) : 0;
   const selectedProject = projects.find((project) => String(project.id) === String(projectId));
   const selectedShip = ships.find((ship) => String(ship.id) === String(shipId));
+  const isMainEditingShip = page === "main" && mainEditShipId && String(mainEditShipId) === String(shipId);
+  const overviewShips = useMemo(
+    () => [...(overview?.ships || [])].sort((left, right) => {
+      if (right.before_sea_trial_done !== left.before_sea_trial_done) {
+        return right.before_sea_trial_done - left.before_sea_trial_done;
+      }
+      if (right.completion_done !== left.completion_done) {
+        return right.completion_done - left.completion_done;
+      }
+      return String(left.hull_no).localeCompare(String(right.hull_no), undefined, { numeric: true });
+    }),
+    [overview],
+  );
+  const mainShipCards = useMemo(
+    () => overviewShips.filter((ship) => String(ship.project_id) === String(projectId)),
+    [overviewShips, projectId],
+  );
 
   function loginAsUser() {
     setRole("user");
@@ -117,6 +138,7 @@ function App() {
     setAdminPassword("");
     setProjectId("");
     setShipId("");
+    setMainEditShipId("");
     setTree([]);
     setShips([]);
     setProgress([]);
@@ -132,6 +154,23 @@ function App() {
 
   async function loadOverview() {
     setOverview(await request("/overview"));
+  }
+
+  async function loadSeaTrialDetail(ship) {
+    if (String(seaTrialDetailShipId) === String(ship.ship_id)) {
+      setSeaTrialDetailShipId(null);
+      setSeaTrialDetail(null);
+      return;
+    }
+    setSeaTrialDetailShipId(ship.ship_id);
+    setSeaTrialDetail(await request(`/ships/${ship.ship_id}/unfinished-before-sea-trial`));
+  }
+
+  function startMainShipEdit(ship) {
+    setShipId(String(ship.ship_id ?? ship.id));
+    setMainEditShipId(String(ship.ship_id ?? ship.id));
+    setProgress([]);
+    setExpanded({});
   }
 
   async function loadProjectData(id = projectId, options = {}) {
@@ -168,6 +207,7 @@ function App() {
   useEffect(() => {
     if (!isLoggedIn) return;
     loadProjectData(projectId).catch((error) => setMessage(error.message));
+    setMainEditShipId("");
   }, [projectId, isLoggedIn, showInactive]);
 
   useEffect(() => {
@@ -430,6 +470,24 @@ function App() {
     setMessage(`Rolled back history #${row.id}.`);
   }
 
+  function renderOverviewProgress(label, done, total, percent, open, options = {}) {
+    return (
+      <div className={`overview-progress ${options.primary ? "primary" : ""}`}>
+        <div>
+          <span>{label}</span>
+          <strong>{done} / {total} ({percent}%)</strong>
+        </div>
+        <div className="progress-track">
+          <div className="progress-fill" style={{ width: `${percent}%` }} />
+        </div>
+        <div className="overview-progress-footer">
+          <small>{open} open</small>
+          {options.action}
+        </div>
+      </div>
+    );
+  }
+
   function renderInspectionRow(item) {
     const status = progressByItem[item.id]?.status || "not_started";
     const done = status === "done";
@@ -538,27 +596,74 @@ function App() {
             <div className="metric-card"><span>Ships</span><strong>{overview?.ship_count ?? 0}</strong></div>
             <div className="metric-card"><span>Inspection Items</span><strong>{overview?.itp_item_count ?? 0}</strong></div>
           </div>
-          <section className="overview-table">
+          <section className="overview-board">
             <div className="panel-title">
               <h2>Ship Overview</h2>
-              <span>Read-only completion status for every ship.</span>
+              <span>Read-only progress by ship. Sea trial open items can be reviewed here.</span>
             </div>
-            <div className="overview-row overview-head">
-              <span>Project</span>
-              <span>Hull No.</span>
-              <span>Ship Name</span>
-              <span>Items Before Sea Trial</span>
-              <span>Completion</span>
+            <div className="ship-card-grid">
+              {overviewShips.map((ship) => (
+                <article className={`ship-card ${String(seaTrialDetailShipId) === String(ship.ship_id) ? "selected" : ""}`} key={ship.ship_id}>
+                  <div className="ship-card-title">
+                    <div>
+                      <h3>{ship.hull_no}</h3>
+                      <span>{ship.ship_name || "Unnamed ship"}</span>
+                    </div>
+                    <small>{ship.project_name}</small>
+                  </div>
+                  {renderOverviewProgress(
+                    "Before Sea Trial",
+                    ship.before_sea_trial_done,
+                    ship.before_sea_trial_total,
+                    ship.before_sea_trial_percent,
+                    ship.before_sea_trial_open ?? Math.max(ship.before_sea_trial_total - ship.before_sea_trial_done, 0),
+                    {
+                      primary: true,
+                      action: (
+                        <button
+                          className="soft-button compact-button"
+                          onClick={() => loadSeaTrialDetail(ship).catch((error) => setMessage(error.message))}
+                          disabled={!ship.before_sea_trial_total}
+                        >
+                          <Eye size={14} /> Open Items
+                        </button>
+                      ),
+                    },
+                  )}
+                  {renderOverviewProgress(
+                    "Before Delivery",
+                    ship.completion_done,
+                    ship.completion_total,
+                    ship.completion_percent,
+                    ship.completion_open ?? Math.max(ship.completion_total - ship.completion_done, 0),
+                  )}
+                </article>
+              ))}
             </div>
-            {(overview?.ships || []).map((ship) => (
-              <div className="overview-row" key={ship.ship_id}>
-                <span>{ship.project_name}</span>
-                <span>{ship.hull_no}</span>
-                <span>{ship.ship_name || ""}</span>
-                <span>{ship.before_sea_trial_done} / {ship.before_sea_trial_total} ({ship.before_sea_trial_percent}%)</span>
-                <span>{ship.completion_done} / {ship.completion_total} ({ship.completion_percent}%)</span>
-              </div>
-            ))}
+            {seaTrialDetail && (
+              <aside className="sea-trial-detail">
+                <div className="panel-title">
+                  <h2>{seaTrialDetail.hull_no} - Before Sea Trial Open Items</h2>
+                  <span>{seaTrialDetail.open} open / {seaTrialDetail.total} total</span>
+                </div>
+                {seaTrialDetail.groups.length === 0 ? (
+                  <div className="empty-state compact">No open items before sea trial.</div>
+                ) : (
+                  <div className="open-group-list">
+                    {seaTrialDetail.groups.map((group) => (
+                      <section className="open-group" key={group.code}>
+                        <h3>{group.code} <span>{group.title_en}</span><small>{group.open_count}</small></h3>
+                        {group.groups.map((subgroup) => (
+                          <div className="open-subgroup" key={subgroup.code}>
+                            <h4>{subgroup.code} <span>{subgroup.title_en}</span><small>{subgroup.open_count}</small></h4>
+                          </div>
+                        ))}
+                      </section>
+                    ))}
+                  </div>
+                )}
+              </aside>
+            )}
           </section>
         </section>
       )}
@@ -573,41 +678,76 @@ function App() {
                 {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
               </select>
             </label>
-            <label>
-              <span>Ship</span>
-              <select value={shipId} onChange={(event) => setShipId(event.target.value)}>
-                <option value="">Select ship</option>
-                {ships.map((ship) => <option key={ship.id} value={ship.id}>{ship.hull_no}{ship.name ? ` - ${ship.name}` : ""}</option>)}
-              </select>
-            </label>
           </div>
 
-          <section className="itp-browser">
-            <div className="panel-title">
-              <h2>{selectedProject ? selectedProject.name : "Project"} / {selectedShip ? selectedShip.hull_no : "Ship"}</h2>
-              <span>{progress.filter((item) => item.status === "done").length} / {progress.length} completed</span>
-            </div>
-            {projectId && shipId && (
-              <div className="trial-progress">
+          {!projectId ? (
+            <div className="empty-state">Select a project first.</div>
+          ) : !isMainEditingShip ? (
+            <section className="ship-select-board">
+              <div className="panel-title">
+                <h2>Select Ship to Edit</h2>
+                <span>Choose the ship before changing ITP status.</span>
+              </div>
+              {mainShipCards.length === 0 ? (
+                <div className="empty-state compact">No ships found for this project.</div>
+              ) : (
+                <div className="ship-card-grid">
+                  {mainShipCards.map((ship) => (
+                    <article className="ship-card edit-card" key={ship.ship_id} onClick={() => startMainShipEdit(ship)}>
+                      <div className="ship-card-title">
+                        <div>
+                          <h3>{ship.hull_no}</h3>
+                          <span>{ship.ship_name || "Unnamed ship"}</span>
+                        </div>
+                        <small>{ship.project_name}</small>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
+          ) : (
+            <section className="itp-browser">
+              <div className="editing-context">
                 <div>
-                  <span>Mooring Trial</span>
-                  <strong>{mooringDone} / {mooringItems.length} ({mooringPercent}%)</strong>
+                  <span>Editing Ship</span>
+                  <strong>{selectedShip ? `${selectedShip.hull_no}${selectedShip.name ? ` - ${selectedShip.name}` : ""}` : "Selected ship"}</strong>
+                  <small>{selectedProject?.name || "Project"}</small>
                 </div>
-                <div className="progress-track">
-                  <div className="progress-fill" style={{ width: `${mooringPercent}%` }} />
+                <button
+                  className="soft-button"
+                  onClick={() => {
+                    setMainEditShipId("");
+                    setExpanded({});
+                  }}
+                >
+                  Change Ship
+                </button>
+              </div>
+              <div className="panel-title">
+                <h2>{selectedProject ? selectedProject.name : "Project"} / {selectedShip ? selectedShip.hull_no : "Ship"}</h2>
+                <span>{progress.filter((item) => item.status === "done").length} / {progress.length} completed</span>
+              </div>
+              {projectId && shipId && (
+                <div className="trial-progress">
+                  <div>
+                    <span>Mooring Trial</span>
+                    <strong>{mooringDone} / {mooringItems.length} ({mooringPercent}%)</strong>
+                  </div>
+                  <div className="progress-track">
+                    <div className="progress-fill" style={{ width: `${mooringPercent}%` }} />
+                  </div>
                 </div>
-              </div>
-            )}
-            {!projectId || !shipId ? (
-              <div className="empty-state">Select a project and ship to view ITP items.</div>
-            ) : thirdLevelGroups.length === 0 ? (
-              <div className="empty-state">No third-level ITP categories found.</div>
-            ) : (
-              <div className="category-list">
-                {thirdLevelGroups.map((group) => renderMainGroup(group))}
-              </div>
-            )}
-          </section>
+              )}
+              {thirdLevelGroups.length === 0 ? (
+                <div className="empty-state">No third-level ITP categories found.</div>
+              ) : (
+                <div className="category-list">
+                  {thirdLevelGroups.map((group) => renderMainGroup(group))}
+                </div>
+              )}
+            </section>
+          )}
         </section>
       )}
 

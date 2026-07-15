@@ -1028,9 +1028,11 @@ def overview(db: Session = Depends(get_db)):
                     "ship_name": ship.name,
                     "completion_done": ship_done,
                     "completion_total": len(item_ids),
+                    "completion_open": max(len(item_ids) - ship_done, 0),
                     "completion_percent": round((ship_done / len(item_ids)) * 100) if item_ids else 0,
                     "before_sea_trial_done": before_sea_trial_done,
                     "before_sea_trial_total": len(before_sea_trial_item_ids),
+                    "before_sea_trial_open": max(len(before_sea_trial_item_ids) - before_sea_trial_done, 0),
                     "before_sea_trial_percent": round((before_sea_trial_done / len(before_sea_trial_item_ids)) * 100) if before_sea_trial_item_ids else 0,
                 }
             )
@@ -1041,6 +1043,103 @@ def overview(db: Session = Depends(get_db)):
         "history_count": db.query(AuditLog).count(),
         "projects": rows,
         "ships": ship_rows,
+    }
+
+
+@app.get("/api/ships/{ship_id}/unfinished-before-sea-trial")
+def unfinished_before_sea_trial(ship_id: int, db: Session = Depends(get_db)):
+    ship = db.get(Ship, ship_id)
+    if ship is None:
+        raise HTTPException(status_code=404, detail="Ship not found.")
+    project = db.get(Project, ship.project_id)
+    project_items = (
+        db.query(ItpItem)
+        .filter(ItpItem.project_id == ship.project_id, ItpItem.active == True)
+        .order_by(ItpItem.sort_order, ItpItem.code)
+        .all()
+    )
+    items_by_id = {item.id: item for item in project_items}
+    inspection_items = [
+        item
+        for item in project_items
+        if item.is_inspection and item.before_sea_trial and item.level == 5
+    ]
+    progress_rows = db.query(ShipProgress).filter(ShipProgress.ship_id == ship_id).all()
+    progress_by_uid = {row.item_uid: row for row in progress_rows if row.item_uid}
+    progress_by_item = {row.itp_item_id: row for row in progress_rows}
+
+    def ancestor_for(item: ItpItem, level: int) -> ItpItem | None:
+        current = item
+        seen: set[int] = set()
+        while current and current.id not in seen:
+            if current.level == level:
+                return current
+            seen.add(current.id)
+            current = items_by_id.get(current.parent_id) if current.parent_id else None
+        return None
+
+    grouped: dict[str, dict] = {}
+    done = 0
+    for item in inspection_items:
+        progress = progress_by_uid.get(item.item_uid) or progress_by_item.get(item.id)
+        if progress and progress.status == "done":
+            done += 1
+            continue
+        level3 = ancestor_for(item, 3)
+        level4 = ancestor_for(item, 4)
+        level3_key = level3.code if level3 else "Ungrouped"
+        group = grouped.setdefault(
+            level3_key,
+            {
+                "code": level3.code if level3 else "Ungrouped",
+                "title_en": level3.title_en if level3 else "Ungrouped",
+                "title_zh": level3.title_zh if level3 else None,
+                "groups": {},
+            },
+        )
+        level4_key = level4.code if level4 else "Ungrouped"
+        subgroup = group["groups"].setdefault(
+            level4_key,
+            {
+                "code": level4.code if level4 else "Ungrouped",
+                "title_en": level4.title_en if level4 else "Ungrouped",
+                "title_zh": level4.title_zh if level4 else None,
+                "items": [],
+            },
+        )
+        subgroup["items"].append(
+            {
+                "id": item.id,
+                "code": item.code,
+                "title_en": item.title_en,
+                "title_zh": item.title_zh,
+                "status": progress.status if progress else "not_started",
+            }
+        )
+
+    groups = []
+    for group in grouped.values():
+        subgroups = list(group["groups"].values())
+        for subgroup in subgroups:
+            subgroup["open_count"] = len(subgroup["items"])
+        group["groups"] = subgroups
+        group["open_count"] = sum(subgroup["open_count"] for subgroup in subgroups)
+        groups.append(group)
+
+    total = len(inspection_items)
+    open_count = sum(group["open_count"] for group in groups)
+    return {
+        "project_id": ship.project_id,
+        "project_name": project.name if project else "",
+        "ship_id": ship.id,
+        "hull_no": ship.hull_no,
+        "ship_name": ship.name,
+        "scope": "before_sea_trial",
+        "done": done,
+        "total": total,
+        "open": open_count,
+        "percent": round((done / total) * 100) if total else 0,
+        "groups": groups,
     }
 
 
