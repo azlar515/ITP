@@ -1,4 +1,8 @@
+import base64
+import hashlib
+import hmac
 import json
+import os
 from datetime import datetime
 from io import BytesIO
 from urllib.parse import quote
@@ -19,6 +23,8 @@ from .schemas import (
     ItpItemCreate,
     ItpItemOut,
     ItpItemUpdate,
+    LoginRequest,
+    LoginResponse,
     ProgressUpdate,
     ProjectCreate,
     ProjectOut,
@@ -105,13 +111,61 @@ app.add_middleware(
 )
 
 
-def require_admin(x_role: str = Header(default="user")) -> None:
-    if x_role.lower() != "admin":
+USER_PASSWORD = os.environ.get("ITP_USER_PASSWORD", "0000")
+ADMIN_PASSWORD = os.environ.get("ITP_ADMIN_PASSWORD", "Admin")
+AUTH_SECRET = os.environ.get("ITP_AUTH_SECRET", "change-this-secret-for-production")
+
+
+def sign_token(payload: str) -> str:
+    return hmac.new(AUTH_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+
+
+def create_token(role: str, user: str) -> str:
+    payload = f"{role}:{user}"
+    encoded = base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
+    return f"{encoded}.{sign_token(encoded)}"
+
+
+def parse_token(token: str) -> dict[str, str] | None:
+    try:
+        encoded, signature = token.split(".", 1)
+        if not hmac.compare_digest(signature, sign_token(encoded)):
+            return None
+        padded = encoded + "=" * (-len(encoded) % 4)
+        role, user = base64.urlsafe_b64decode(padded.encode()).decode().split(":", 1)
+        if role not in {"user", "admin"}:
+            return None
+        return {"role": role, "user": user}
+    except Exception:
+        return None
+
+
+def current_session(authorization: str = Header(default="")) -> dict[str, str]:
+    prefix = "Bearer "
+    if not authorization.startswith(prefix):
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    session = parse_token(authorization[len(prefix) :])
+    if session is None:
+        raise HTTPException(status_code=401, detail="Invalid authentication token.")
+    return session
+
+
+def require_admin(session: dict[str, str] = Depends(current_session)) -> None:
+    if session["role"] != "admin":
         raise HTTPException(status_code=403, detail="Admin role required.")
 
 
-def actor(x_user: str = Header(default="user"), x_role: str = Header(default="user")) -> str:
-    return f"{x_user} ({x_role})"
+def actor(session: dict[str, str] = Depends(current_session)) -> str:
+    return f"{session['user']} ({session['role']})"
+
+
+@app.post("/api/auth/login", response_model=LoginResponse)
+def login(payload: LoginRequest):
+    if hmac.compare_digest(payload.password, ADMIN_PASSWORD):
+        return LoginResponse(role="admin", user="admin", token=create_token("admin", "admin"))
+    if hmac.compare_digest(payload.password, USER_PASSWORD):
+        return LoginResponse(role="user", user="user", token=create_token("user", "user"))
+    raise HTTPException(status_code=401, detail="Invalid password.")
 
 
 def build_tree(items: list[ItpItem]) -> list[ItpItemOut]:

@@ -24,10 +24,12 @@ import {
 import "./styles.css";
 
 const API = "/api";
-const ADMIN_PASSWORD = "Admin";
 
-function headers(role, user = "web") {
-  return { "Content-Type": "application/json", "X-Role": role, "X-User": user };
+function headers(token, contentType = true) {
+  return {
+    ...(contentType ? { "Content-Type": "application/json" } : {}),
+    Authorization: `Bearer ${token}`,
+  };
 }
 
 async function request(path, options = {}) {
@@ -56,8 +58,9 @@ function collectInspectionChildren(node) {
 function App() {
   const [role, setRole] = useState("admin");
   const [user, setUser] = useState("yard-user");
+  const [authToken, setAuthToken] = useState("");
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [adminPassword, setAdminPassword] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
   const [page, setPage] = useState("main");
   const [projects, setProjects] = useState([]);
   const [projectId, setProjectId] = useState("");
@@ -87,12 +90,8 @@ function App() {
   const thirdLevelGroups = useMemo(() => collectLevel(tree, 3), [tree]);
   const fourthLevelGroups = useMemo(() => collectLevel(tree, 4), [tree]);
   const progressByItem = useMemo(() => Object.fromEntries(progress.map((item) => [item.item_id, item])), [progress]);
-  const mooringItems = useMemo(
-    () => fourthLevelGroups.filter((group) => group.code !== "S1001").flatMap((group) => collectInspectionChildren(group)),
-    [fourthLevelGroups],
-  );
-  const mooringDone = mooringItems.filter((item) => progressByItem[item.id]?.status === "done").length;
-  const mooringPercent = mooringItems.length ? Math.round((mooringDone / mooringItems.length) * 100) : 0;
+  const itpDone = progress.filter((item) => item.status === "done").length;
+  const itpPercent = progress.length ? Math.round((itpDone / progress.length) * 100) : 0;
   const selectedProject = projects.find((project) => String(project.id) === String(projectId));
   const selectedShip = ships.find((ship) => String(ship.id) === String(shipId));
   const isMainEditingShip = page === "main" && mainEditShipId && String(mainEditShipId) === String(shipId);
@@ -113,29 +112,25 @@ function App() {
     [overviewShips, projectId],
   );
 
-  function loginAsUser() {
-    setRole("user");
-    setUser("user");
+  async function loginWithPassword() {
+    const result = await request("/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: loginPassword }),
+    });
+    setRole(result.role);
+    setUser(result.user);
+    setAuthToken(result.token);
     setPage("main");
     setIsLoggedIn(true);
     setMessage("");
-  }
-
-  function loginAsAdmin() {
-    if (adminPassword !== ADMIN_PASSWORD) {
-      setMessage("Invalid admin password.");
-      return;
-    }
-    setRole("admin");
-    setUser("admin");
-    setPage("main");
-    setIsLoggedIn(true);
-    setMessage("");
+    setLoginPassword("");
   }
 
   function logout() {
     setIsLoggedIn(false);
-    setAdminPassword("");
+    setAuthToken("");
+    setLoginPassword("");
     setProjectId("");
     setShipId("");
     setMainEditShipId("");
@@ -219,7 +214,7 @@ function App() {
     if (!newProject.trim()) return;
     const project = await request("/projects", {
       method: "POST",
-      headers: headers(role, user),
+      headers: headers(authToken),
       body: JSON.stringify({ name: newProject.trim() }),
     });
     setNewProject("");
@@ -233,7 +228,7 @@ function App() {
     if (!projectId || !newShip.hull_no.trim()) return;
     const ship = await request("/ships", {
       method: "POST",
-      headers: headers(role, user),
+      headers: headers(authToken),
       body: JSON.stringify({ project_id: Number(projectId), hull_no: newShip.hull_no.trim(), name: newShip.name.trim() || null }),
     });
     setNewShip({ hull_no: "", name: "" });
@@ -246,7 +241,7 @@ function App() {
     if (!projectId || !newItem.code.trim()) return;
     await request("/itp-items", {
       method: "POST",
-      headers: headers(role, user),
+      headers: headers(authToken),
       body: JSON.stringify({
         project_id: Number(projectId),
         parent_code: newItem.parent_code.trim() || null,
@@ -266,7 +261,7 @@ function App() {
     form.append("file", selectedFile);
     const response = await fetch(`${API}/import/preview`, {
       method: "POST",
-      headers: { "X-Role": role, "X-User": user },
+      headers: headers(authToken, false),
       body: form,
     });
     if (!response.ok) throw new Error((await response.json()).detail || "Import preview failed");
@@ -280,7 +275,7 @@ function App() {
     form.append("file", selectedFile);
     const response = await fetch(`${API}/import/apply?mode=${importMode}`, {
       method: "POST",
-      headers: { "X-Role": role, "X-User": user },
+      headers: headers(authToken, false),
       body: form,
     });
     if (!response.ok) throw new Error((await response.json()).detail || "Import failed");
@@ -296,7 +291,7 @@ function App() {
     if (!projectId || !selectedProject) return;
     const response = await fetch(`${API}/projects/${projectId}/export`, {
       method: "GET",
-      headers: { "X-Role": role, "X-User": user },
+      headers: headers(authToken, false),
     });
     if (!response.ok) {
       const detail = await response.json().catch(() => ({}));
@@ -316,7 +311,7 @@ function App() {
   async function exportShipRecords(ship) {
     const response = await fetch(`${API}/ships/${ship.id}/records/export`, {
       method: "GET",
-      headers: { "X-Role": role, "X-User": user },
+      headers: headers(authToken, false),
     });
     if (!response.ok) {
       const detail = await response.json().catch(() => ({}));
@@ -340,7 +335,7 @@ function App() {
     form.append("file", file);
     const response = await fetch(`${API}/ships/${ship.id}/records/import`, {
       method: "POST",
-      headers: { "X-Role": role, "X-User": user },
+      headers: headers(authToken, false),
       body: form,
     });
     if (!response.ok) {
@@ -358,7 +353,7 @@ function App() {
     if (!shipId) return;
     await request(`/ships/${shipId}/progress/${item.id}`, {
       method: "PUT",
-      headers: headers(role, user),
+      headers: headers(authToken),
       body: JSON.stringify({
         status,
         notes: progressByItem[item.id]?.notes || "",
@@ -375,7 +370,7 @@ function App() {
     if (!window.confirm(`Delete project ${selectedProject.name}? This will delete its ITP template, ships, and progress records.`)) return;
     await request(`/projects/${projectId}`, {
       method: "DELETE",
-      headers: headers(role, user),
+      headers: headers(authToken),
     });
     setProjectId("");
     setShipId("");
@@ -391,7 +386,7 @@ function App() {
     if (!window.confirm(`Delete ship ${ship.hull_no}? Its progress records will also be deleted.`)) return;
     await request(`/ships/${ship.id}`, {
       method: "DELETE",
-      headers: headers(role, user),
+      headers: headers(authToken),
     });
     if (String(ship.id) === String(shipId)) {
       setShipId("");
@@ -414,7 +409,7 @@ function App() {
     }
     const updated = await request(`/ships/${ship.id}`, {
       method: "PUT",
-      headers: headers(role, user),
+      headers: headers(authToken),
       body: JSON.stringify({
         hull_no: shipDraft.hull_no.trim(),
         name: shipDraft.name.trim() || null,
@@ -430,7 +425,7 @@ function App() {
     if (!window.confirm(`Delete ITP item ${item.code}?`)) return;
     await request(`/itp-items/${item.id}`, {
       method: "DELETE",
-      headers: headers(role, user),
+      headers: headers(authToken),
     });
     await loadProjectData(projectId);
     await loadOverview();
@@ -440,7 +435,7 @@ function App() {
   async function toggleBeforeSeaTrial(item) {
     await request(`/itp-items/${item.id}/before-sea-trial`, {
       method: "PUT",
-      headers: headers(role, user),
+      headers: headers(authToken),
     });
     await loadProjectData(projectId, { preserveAdminExpanded: true });
     await loadOverview();
@@ -451,7 +446,7 @@ function App() {
     const nextActive = item.active === false;
     await request(`/itp-items/${item.id}/active?active=${nextActive ? "true" : "false"}`, {
       method: "PUT",
-      headers: headers(role, user),
+      headers: headers(authToken),
     });
     await loadProjectData(projectId, { preserveAdminExpanded: true });
     await loadProgress(shipId);
@@ -462,7 +457,7 @@ function App() {
   async function rollbackHistory(row) {
     await request(`/history/${row.id}/rollback`, {
       method: "POST",
-      headers: headers(role, user),
+      headers: headers(authToken),
     });
     await loadProjectData(projectId);
     await loadProgress(shipId);
@@ -547,23 +542,22 @@ function App() {
       <main className="login-shell">
         <section className="login-panel">
           <div>
-            <h1>Shipyard ITP Database</h1>
-            <p>Select a role to continue.</p>
+            <h1>JN VLEC Project ITP Database</h1>
+            <p>Enter password to continue.</p>
           </div>
           {message && <div className="login-error">{message}</div>}
           <div className="login-actions">
-            <button className="login-choice" onClick={loginAsUser}>user</button>
             <div className="admin-login">
-              <button className="login-choice" onClick={loginAsAdmin}>admin</button>
               <input
                 type="password"
-                placeholder="Admin password"
-                value={adminPassword}
-                onChange={(event) => setAdminPassword(event.target.value)}
+                placeholder="Password"
+                value={loginPassword}
+                onChange={(event) => setLoginPassword(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter") loginAsAdmin();
+                  if (event.key === "Enter") loginWithPassword().catch((error) => setMessage(error.message));
                 }}
               />
+              <button className="login-choice" onClick={() => loginWithPassword().catch((error) => setMessage(error.message))}>Login</button>
             </div>
           </div>
         </section>
@@ -575,8 +569,8 @@ function App() {
     <main className="app-shell">
       <header className="topbar">
         <div>
-          <h1>Shipyard ITP Database</h1>
-          <p>Project-level ITP completion tracking by ship.</p>
+          <h1>JN VLEC Project ITP Database</h1>
+          <p>PG Newbuilding</p>
         </div>
         <nav className="nav-panel">
           <button className={page === "overview" ? "nav-active" : ""} onClick={() => setPage("overview")}><BarChart3 size={16} /> Overview</button>
@@ -731,11 +725,11 @@ function App() {
               {projectId && shipId && (
                 <div className="trial-progress">
                   <div>
-                    <span>Mooring Trial</span>
-                    <strong>{mooringDone} / {mooringItems.length} ({mooringPercent}%)</strong>
+                    <span>ITP Completeness</span>
+                    <strong>{itpDone} / {progress.length} ({itpPercent}%)</strong>
                   </div>
                   <div className="progress-track">
-                    <div className="progress-fill" style={{ width: `${mooringPercent}%` }} />
+                    <div className="progress-fill" style={{ width: `${itpPercent}%` }} />
                   </div>
                 </div>
               )}
@@ -950,3 +944,4 @@ function App() {
 }
 
 createRoot(document.getElementById("root")).render(<App />);
+

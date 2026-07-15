@@ -9,6 +9,16 @@ class ProjectCreate(BaseModel):
     description: str | None = None
 
 
+class LoginRequest(BaseModel):
+    password: str
+
+
+class LoginResponse(BaseModel):
+    role: str
+    user: str
+    token: str
+
+
 class ProjectOut(ProjectCreate):
     id: int
     created_at: datetime
