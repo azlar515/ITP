@@ -292,3 +292,39 @@ Ignored from Git:
 - Database is SQLite, which is acceptable for early LAN testing but should be monitored if multiple users write concurrently.
 - Database backups are required before updates or schema changes.
 - Only level 5 items are inspection records. Do not regress this rule.
+
+## Sync Check - 2026-07-15
+
+Checked local repository, GitHub, and LAN server.
+
+Local:
+
+- Path: `D:\code\Codex-ITP`
+- Branch: `main`
+- HEAD: `e5e61e12280da7e792938940deed4552eef7193e`
+- Working tree: clean
+
+GitHub:
+
+- Repository: `https://github.com/azlar515/ITP.git`
+- `origin/main`: `e5e61e12280da7e792938940deed4552eef7193e`
+
+LAN server:
+
+- Host: `192.168.190.161`
+- SSH user: `kjxing`
+- App path: `/home/kjxing/server/apps/codex-itp`
+- Branch: `main`
+- HEAD: `e5e61e12280da7e792938940deed4552eef7193e`
+- Working tree: clean
+- Remote: `https://github.com/azlar515/ITP.git`
+- Backend process cwd: `/home/kjxing/server/apps/codex-itp/backend`
+- Backend command: `/home/kjxing/server/apps/codex-itp/backend/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000`
+- Backend API check: `http://127.0.0.1:8000/api/projects` returned `200`
+- Web check: `http://127.0.0.1/` returned `200`
+
+Conclusion:
+
+- Local, GitHub, and LAN server code were synchronized at commit `e5e61e1`.
+- Server `git fetch origin main` failed once because of a transient GitHub network receive error, but server `HEAD` and cached `origin/main` already matched local and GitHub.
+- Do not store server passwords in this document or repository.
