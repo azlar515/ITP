@@ -77,7 +77,7 @@ function App() {
   const [preview, setPreview] = useState(null);
   const [selectedFile, setSelectedFile] = useState(null);
   const [importMode, setImportMode] = useState("partial");
-  const [showInactive, setShowInactive] = useState(false);
+  const showInactive = false;
   const [showInactivePanel, setShowInactivePanel] = useState(false);
   const [inactiveItems, setInactiveItems] = useState([]);
   const [newProject, setNewProject] = useState("");
@@ -538,6 +538,39 @@ function App() {
     setMessage(`Permanently deleted ${item.code}. Removed ${result.progress_deleted ?? 0} progress record(s) and ${result.events_deleted ?? 0} event(s).`);
   }
 
+  async function clearInactiveItems() {
+    if (!projectId || inactiveItems.length === 0) return;
+    if (!window.confirm(`Permanently delete all ${inactiveItems.length} inactive ITP item(s) in this project? This will also delete their UIDs, inspection records, and status event history.`)) return;
+    let result;
+    try {
+      result = await request(`/projects/${projectId}/inactive-items`, {
+        method: "DELETE",
+        headers: headers(authToken),
+      });
+    } catch (error) {
+      if (!/not found|404/i.test(error.message)) throw error;
+      let affected = 0;
+      let progressDeleted = 0;
+      let eventsDeleted = 0;
+      const deepestFirst = [...inactiveItems].sort((left, right) => (right.depth - left.depth) || right.code.localeCompare(left.code));
+      for (const item of deepestFirst) {
+        const deleted = await request(`/itp-items/${item.id}`, {
+          method: "DELETE",
+          headers: headers(authToken),
+        });
+        affected += deleted.affected ?? 1;
+        progressDeleted += deleted.progress_deleted ?? 0;
+        eventsDeleted += deleted.events_deleted ?? 0;
+      }
+      result = { affected, progress_deleted: progressDeleted, events_deleted: eventsDeleted };
+    }
+    await loadProjectData(projectId, { preserveAdminExpanded: true });
+    await loadInactiveItems(projectId);
+    await loadProgress(shipId);
+    await loadOverview();
+    setMessage(`Cleared ${result.affected ?? 0} inactive item(s). Removed ${result.progress_deleted ?? 0} progress record(s) and ${result.events_deleted ?? 0} event(s).`);
+  }
+
   async function rollbackHistory(row) {
     await request(`/history/${row.id}/rollback`, {
       method: "POST",
@@ -881,10 +914,6 @@ function App() {
                 <h2>{selectedProject ? `${selectedProject.name} ITP Template` : "ITP Template"}</h2>
                 <span>{flatTree.filter((item) => item.is_inspection && item.active !== false).length} active inspection items</span>
               </div>
-              <label className="check-row">
-                <input type="checkbox" checked={showInactive} onChange={(event) => setShowInactive(event.target.checked)} />
-                Show inactive items
-              </label>
               <div className="inline-form item-form">
                 <input placeholder="Parent code" value={newItem.parent_code} onChange={(event) => setNewItem({ ...newItem, parent_code: event.target.value })} />
                 <input placeholder="Code" value={newItem.code} onChange={(event) => setNewItem({ ...newItem, code: event.target.value })} />
@@ -1016,6 +1045,15 @@ function App() {
             <div className="panel-title">
               <h2><Power size={18} /> Inactive ITP Items</h2>
               <span>{inactiveItems.length} inactive item(s)</span>
+              <button
+                className="danger-button compact-button"
+                onClick={() => clearInactiveItems().catch((error) => setMessage(error.message))}
+                disabled={!projectId || inactiveItems.length === 0}
+                title="Permanently delete all inactive ITP items"
+              >
+                <Trash2 size={14} />
+                Clear all
+              </button>
               <button
                 className="soft-button compact-button"
                 onClick={() => {

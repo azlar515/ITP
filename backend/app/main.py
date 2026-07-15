@@ -561,6 +561,27 @@ def set_itp_item_active(
     return ItpItemOut.model_validate(item)
 
 
+def permanently_delete_itp_item_records(db: Session, item: ItpItem):
+    item_uid = item.item_uid
+    progress_query = db.query(ShipProgress).filter(ShipProgress.itp_item_id == item.id)
+    event_query = db.query(ShipProgressEvent).filter(ShipProgressEvent.itp_item_id == item.id)
+    if item_uid:
+        progress_query = db.query(ShipProgress).filter((ShipProgress.itp_item_id == item.id) | (ShipProgress.item_uid == item_uid))
+        event_query = db.query(ShipProgressEvent).filter((ShipProgressEvent.itp_item_id == item.id) | (ShipProgressEvent.item_uid == item_uid))
+    progress_count = progress_query.delete(synchronize_session=False)
+    event_count = event_query.delete(synchronize_session=False)
+    version_item_count = 0
+    if item_uid:
+        version_item_count = db.query(ItpVersionItem).filter(ItpVersionItem.item_uid == item_uid).delete(synchronize_session=False)
+    db.delete(item)
+    db.flush()
+    return {
+        "progress_count": progress_count,
+        "event_count": event_count,
+        "version_item_count": version_item_count,
+    }
+
+
 @app.delete("/api/itp-items/{item_id}", dependencies=[Depends(require_admin)])
 def delete_itp_item(item_id: int, db: Session = Depends(get_db), current_actor: str = Depends(actor)):
     item = db.get(ItpItem, item_id)
@@ -570,21 +591,8 @@ def delete_itp_item(item_id: int, db: Session = Depends(get_db), current_actor: 
     if has_children:
         raise HTTPException(status_code=400, detail="This ITP item has child items. Delete the child items first.")
     project_id = item.project_id
-    item_uid = item.item_uid
     before = snapshot_item(item)
-    progress_count = (
-        db.query(ShipProgress)
-        .filter((ShipProgress.itp_item_id == item.id) | (ShipProgress.item_uid == item_uid))
-        .delete(synchronize_session=False)
-    )
-    event_count = (
-        db.query(ShipProgressEvent)
-        .filter((ShipProgressEvent.itp_item_id == item.id) | (ShipProgressEvent.item_uid == item_uid))
-        .delete(synchronize_session=False)
-    )
-    version_item_count = db.query(ItpVersionItem).filter(ItpVersionItem.item_uid == item_uid).delete(synchronize_session=False)
-    db.delete(item)
-    db.flush()
+    deleted = permanently_delete_itp_item_records(db, item)
     remaining = db.query(ItpItem).filter(ItpItem.project_id == project_id).all()
     resolve_levels_and_leaf_flags(remaining)
     write_audit(
@@ -592,7 +600,7 @@ def delete_itp_item(item_id: int, db: Session = Depends(get_db), current_actor: 
         entity_type="itp_item",
         entity_id=item_id,
         action="delete_permanent",
-        summary=f"Permanently deleted ITP item {before['code']} with {progress_count} progress record(s), {event_count} event(s), and {version_item_count} version snapshot(s)",
+        summary=f"Permanently deleted ITP item {before['code']} with {deleted['progress_count']} progress record(s), {deleted['event_count']} event(s), and {deleted['version_item_count']} version snapshot(s)",
         actor=current_actor,
         before={
             "id": before["id"],
@@ -601,9 +609,9 @@ def delete_itp_item(item_id: int, db: Session = Depends(get_db), current_actor: 
             "title_zh": before["title_zh"],
             "title_en": before["title_en"],
             "level": before["level"],
-            "progress_count": progress_count,
-            "event_count": event_count,
-            "version_item_count": version_item_count,
+            "progress_count": deleted["progress_count"],
+            "event_count": deleted["event_count"],
+            "version_item_count": deleted["version_item_count"],
         },
         after=None,
     )
@@ -611,7 +619,80 @@ def delete_itp_item(item_id: int, db: Session = Depends(get_db), current_actor: 
     if project:
         create_itp_version_snapshot(db, project, current_actor, "manual_delete")
     db.commit()
-    return {"ok": True, "action": "delete_permanent", "affected": 1, "progress_deleted": progress_count, "events_deleted": event_count}
+    return {"ok": True, "action": "delete_permanent", "affected": 1, "progress_deleted": deleted["progress_count"], "events_deleted": deleted["event_count"]}
+
+
+@app.delete("/api/projects/{project_id}/inactive-items", dependencies=[Depends(require_admin)])
+def delete_inactive_itp_items(project_id: int, db: Session = Depends(get_db), current_actor: str = Depends(actor)):
+    project = db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    inactive_items = db.query(ItpItem).filter(ItpItem.project_id == project_id, ItpItem.active == False).all()
+    if not inactive_items:
+        return {"ok": True, "action": "delete_inactive_permanent", "affected": 0, "progress_deleted": 0, "events_deleted": 0}
+
+    blocked = []
+    for item in inactive_items:
+        has_active_child = db.query(ItpItem).filter(ItpItem.parent_id == item.id, ItpItem.active == True).first() is not None
+        if has_active_child:
+            blocked.append(item.code)
+    if blocked:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot clear inactive items because these inactive items still have active child items: {', '.join(blocked[:10])}",
+        )
+
+    pending = sorted(inactive_items, key=lambda row: (row.level, row.code), reverse=True)
+    before_items = [snapshot_item(item) for item in pending]
+    totals = {"progress_count": 0, "event_count": 0, "version_item_count": 0}
+    affected = 0
+    while pending:
+        next_pending = []
+        deleted_any = False
+        for item in pending:
+            has_children = db.query(ItpItem).filter(ItpItem.parent_id == item.id).first() is not None
+            if has_children:
+                next_pending.append(item)
+                continue
+            deleted = permanently_delete_itp_item_records(db, item)
+            totals["progress_count"] += deleted["progress_count"]
+            totals["event_count"] += deleted["event_count"]
+            totals["version_item_count"] += deleted["version_item_count"]
+            affected += 1
+            deleted_any = True
+        if next_pending and not deleted_any:
+            blocked_codes = ", ".join(item.code for item in next_pending[:10])
+            raise HTTPException(status_code=400, detail=f"Cannot clear inactive items with child items: {blocked_codes}")
+        pending = next_pending
+
+    remaining = db.query(ItpItem).filter(ItpItem.project_id == project_id).all()
+    resolve_levels_and_leaf_flags(remaining)
+    write_audit(
+        db,
+        entity_type="itp_item",
+        entity_id=project_id,
+        action="delete_inactive_permanent",
+        summary=f"Permanently deleted {affected} inactive ITP item(s) in {project.name}",
+        actor=current_actor,
+        before={
+            "project_id": project_id,
+            "project_name": project.name,
+            "items": before_items,
+            "progress_count": totals["progress_count"],
+            "event_count": totals["event_count"],
+            "version_item_count": totals["version_item_count"],
+        },
+        after=None,
+    )
+    create_itp_version_snapshot(db, project, current_actor, "manual_delete_inactive")
+    db.commit()
+    return {
+        "ok": True,
+        "action": "delete_inactive_permanent",
+        "affected": affected,
+        "progress_deleted": totals["progress_count"],
+        "events_deleted": totals["event_count"],
+    }
 
 
 @app.post("/api/import/preview", response_model=ImportPreview, dependencies=[Depends(require_admin)])
