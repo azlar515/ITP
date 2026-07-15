@@ -78,6 +78,8 @@ function App() {
   const [selectedFile, setSelectedFile] = useState(null);
   const [importMode, setImportMode] = useState("partial");
   const [showInactive, setShowInactive] = useState(false);
+  const [showInactivePanel, setShowInactivePanel] = useState(false);
+  const [inactiveItems, setInactiveItems] = useState([]);
   const [newProject, setNewProject] = useState("");
   const [newShip, setNewShip] = useState({ hull_no: "", name: "" });
   const [editingShipId, setEditingShipId] = useState(null);
@@ -89,6 +91,13 @@ function App() {
   const [adminExpanded, setAdminExpanded] = useState({});
 
   const flatTree = useMemo(() => flattenTree(tree), [tree]);
+  const inactiveChildrenByParent = useMemo(() => {
+    const children = {};
+    for (const item of inactiveItems) {
+      if (item.parent_id) children[item.parent_id] = true;
+    }
+    return children;
+  }, [inactiveItems]);
   const thirdLevelGroups = useMemo(() => collectLevel(tree, 3), [tree]);
   const fourthLevelGroups = useMemo(() => collectLevel(tree, 4), [tree]);
   const progressByItem = useMemo(() => Object.fromEntries(progress.map((item) => [item.item_id, item])), [progress]);
@@ -188,6 +197,15 @@ function App() {
     }
   }
 
+  async function loadInactiveItems(id = projectId) {
+    if (!id) {
+      setInactiveItems([]);
+      return;
+    }
+    const fullTree = await request(`/projects/${id}/tree?include_inactive=true`);
+    setInactiveItems(flattenTree(fullTree).filter((item) => item.active === false));
+  }
+
   async function loadProgress(id = shipId) {
     if (!id) {
       setProgress([]);
@@ -205,8 +223,9 @@ function App() {
   useEffect(() => {
     if (!isLoggedIn) return;
     loadProjectData(projectId).catch((error) => setMessage(error.message));
+    if (showInactivePanel) loadInactiveItems(projectId).catch((error) => setMessage(error.message));
     setMainEditShipId("");
-  }, [projectId, isLoggedIn, showInactive]);
+  }, [projectId, isLoggedIn, showInactive, showInactivePanel]);
 
   useEffect(() => {
     if (!isLoggedIn) return;
@@ -492,6 +511,31 @@ function App() {
     await loadProgress(shipId);
     await loadOverview();
     setMessage(`${nextActive ? "Restored" : "Deactivated"} ${item.code}.`);
+  }
+
+  async function restoreInactiveItem(item) {
+    await request(`/itp-items/${item.id}/active?active=true`, {
+      method: "PUT",
+      headers: headers(authToken),
+    });
+    await loadProjectData(projectId, { preserveAdminExpanded: true });
+    await loadInactiveItems(projectId);
+    await loadProgress(shipId);
+    await loadOverview();
+    setMessage(`Restored ${item.code}.`);
+  }
+
+  async function permanentlyDeleteInactiveItem(item) {
+    if (!window.confirm(`Permanently delete inactive ITP item ${item.code}? This will also delete its UID, inspection records, and status event history. Items with child items cannot be deleted.`)) return;
+    const result = await request(`/itp-items/${item.id}`, {
+      method: "DELETE",
+      headers: headers(authToken),
+    });
+    await loadProjectData(projectId, { preserveAdminExpanded: true });
+    await loadInactiveItems(projectId);
+    await loadProgress(shipId);
+    await loadOverview();
+    setMessage(`Permanently deleted ${item.code}. Removed ${result.progress_deleted ?? 0} progress record(s) and ${result.events_deleted ?? 0} event(s).`);
   }
 
   async function rollbackHistory(row) {
@@ -966,6 +1010,54 @@ function App() {
                 ))}
               </div>
             </section>
+          </section>
+
+          <section className="inactive-panel">
+            <div className="panel-title">
+              <h2><Power size={18} /> Inactive ITP Items</h2>
+              <span>{inactiveItems.length} inactive item(s)</span>
+              <button
+                className="soft-button compact-button"
+                onClick={() => {
+                  const next = !showInactivePanel;
+                  setShowInactivePanel(next);
+                  if (next) loadInactiveItems(projectId).catch((error) => setMessage(error.message));
+                }}
+                disabled={!projectId}
+              >
+                {showInactivePanel ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                {showInactivePanel ? "Hide" : "View"}
+              </button>
+            </div>
+            {showInactivePanel && (
+              inactiveItems.length === 0 ? (
+                <div className="empty-state compact">No inactive ITP items.</div>
+              ) : (
+                <div className="inactive-list">
+                  {inactiveItems.map((item) => {
+                    const hasChildren = inactiveChildrenByParent[item.id];
+                    return (
+                      <div className="inactive-row" key={item.id}>
+                        <code>{item.code}</code>
+                        <span>{item.title_en}<small>{item.title_zh ? ` / ${item.title_zh}` : ""}</small></span>
+                        <small>{hasChildren ? "Has child items" : `L${item.level}`}</small>
+                        <button className="icon-button active" onClick={() => restoreInactiveItem(item).catch((error) => setMessage(error.message))} title="Restore ITP item">
+                          <Power size={14} />
+                        </button>
+                        <button
+                          className="icon-danger"
+                          onClick={() => permanentlyDeleteInactiveItem(item).catch((error) => setMessage(error.message))}
+                          disabled={hasChildren}
+                          title={hasChildren ? "Delete child items first" : "Permanently delete ITP item"}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )
+            )}
           </section>
 
           <section className="history-panel">

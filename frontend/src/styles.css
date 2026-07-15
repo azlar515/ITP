@@ -742,6 +742,7 @@ code {
 
 .sidebar,
 .panel,
+.inactive-panel,
 .history-panel {
   background: white;
   border: 1px solid var(--border);
@@ -926,9 +927,43 @@ h2 {
   font-size: 13px;
 }
 
+.inactive-panel,
 .history-panel {
   margin: 14px auto 0;
   max-width: 1560px;
+}
+
+.inactive-list {
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.inactive-row {
+  align-items: center;
+  border-bottom: 1px solid #edf2f7;
+  color: #64748b;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  min-height: 40px;
+  padding: 8px 10px;
+}
+
+.inactive-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inactive-row span small,
+.inactive-row small {
+  color: #94a3b8;
+}
+
+.inactive-row span small {
+  margin-left: 6px;
 }
 
 .history-grid {
