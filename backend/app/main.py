@@ -260,6 +260,18 @@ def collect_descendant_items(db: Session, item: ItpItem) -> list[ItpItem]:
     return result
 
 
+def style_export_sheet(sheet) -> None:
+    header_fill = PatternFill("solid", fgColor="FFE2E8F0")
+    alternate_fill = PatternFill("solid", fgColor="FFEAF4FF")
+    for cell in sheet[1]:
+        cell.font = Font(bold=True)
+        cell.fill = header_fill
+    for row_index, row in enumerate(sheet.iter_rows(min_row=2), start=1):
+        if row_index % 2 == 1:
+            for cell in row:
+                cell.fill = alternate_fill
+
+
 @app.get("/api/projects", response_model=list[ProjectOut])
 def list_projects(db: Session = Depends(get_db)):
     return db.query(Project).order_by(Project.name).all()
@@ -331,13 +343,11 @@ def export_project_itp(project_id: int, db: Session = Depends(get_db)):
     sheet.title = "检验项目导入数据对象"
     headers = ["No.", "Parent Code", "Current Code", "Chinese Description", "English Description", "Item UID", "Items Before Sea Trial"]
     sheet.append(headers)
-    for cell in sheet[1]:
-        cell.font = Font(bold=True)
-        cell.fill = PatternFill("solid", fgColor="E2E8F0")
 
     for index, item in enumerate(items, start=1):
         sheet.append([index, item.parent_code, item.code, item.title_zh, item.title_en, item.item_uid, "Y" if item.before_sea_trial else ""])
 
+    style_export_sheet(sheet)
     widths = [10, 22, 22, 34, 48, 40, 24]
     for column_index, width in enumerate(widths, start=1):
         sheet.column_dimensions[sheet.cell(1, column_index).column_letter].width = width
@@ -797,9 +807,7 @@ def export_ship_records(ship_id: int, db: Session = Depends(get_db)):
         )
 
     for sheet in [current_sheet, events_sheet]:
-        for cell in sheet[1]:
-            cell.font = Font(bold=True)
-            cell.fill = PatternFill("solid", fgColor="E2E8F0")
+        style_export_sheet(sheet)
         for column_cells in sheet.columns:
             column_letter = column_cells[0].column_letter
             sheet.column_dimensions[column_letter].width = min(max(len(str(cell.value or "")) for cell in column_cells) + 2, 42)
