@@ -6,6 +6,7 @@ import os
 import re
 from datetime import datetime
 from io import BytesIO
+from pathlib import Path
 from urllib.parse import quote
 from uuid import uuid4
 
@@ -14,6 +15,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import mm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.platypus import Image as ReportLabImage
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from sqlalchemy.orm import Session
 
 from .database import Base, SessionLocal, engine, get_db
@@ -170,6 +180,7 @@ def login(payload: LoginRequest):
 
 
 CODE_PART_RE = re.compile(r"\d+|\D+")
+PDF_FONT_CACHE: str | None = None
 
 
 def natural_code_key(code: str | None) -> tuple:
@@ -215,6 +226,34 @@ def build_tree(items: list[ItpItem]) -> list[ItpItemOut]:
         else:
             roots.append(node)
     return sort_tree_nodes(roots)
+
+
+def pdf_font_name() -> str:
+    global PDF_FONT_CACHE
+    if PDF_FONT_CACHE:
+        return PDF_FONT_CACHE
+    candidates = [
+        r"C:\Windows\Fonts\msyh.ttc",
+        r"C:\Windows\Fonts\simsun.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            try:
+                pdfmetrics.registerFont(TTFont("ITPFont", path))
+                PDF_FONT_CACHE = "ITPFont"
+                return "ITPFont"
+            except Exception:
+                continue
+    PDF_FONT_CACHE = "Helvetica"
+    return "Helvetica"
+
+
+def pg_logo_path() -> str | None:
+    path = Path(__file__).resolve().parents[2] / "frontend" / "public" / "pg-logo.png"
+    return str(path) if path.exists() else None
 
 
 def apply_item_snapshot(item: ItpItem, snapshot: dict) -> None:
@@ -1282,11 +1321,29 @@ def overview(db: Session = Depends(get_db)):
     }
 
 
-@app.get("/api/ships/{ship_id}/unfinished-before-sea-trial")
-def unfinished_before_sea_trial(ship_id: int, db: Session = Depends(get_db)):
+OPEN_ITEM_SCOPES = {
+    "before_sea_trial": {
+        "title": "Before Sea Trial Open Items",
+        "summary_total_label": "Total Before Sea Trial",
+        "empty_text": "No open items before sea trial.",
+        "filename_scope": "Before Sea Trial Open Items",
+    },
+    "before_delivery": {
+        "title": "Before Delivery Open Items",
+        "summary_total_label": "Total Before Delivery",
+        "empty_text": "No open items before delivery.",
+        "filename_scope": "Before Delivery Open Items",
+    },
+}
+
+
+def ship_open_items_data(ship_id: int, db: Session, scope: str) -> dict:
     ship = db.get(Ship, ship_id)
     if ship is None:
         raise HTTPException(status_code=404, detail="Ship not found.")
+    scope_config = OPEN_ITEM_SCOPES.get(scope)
+    if scope_config is None:
+        raise HTTPException(status_code=400, detail="Invalid open item scope.")
     project = db.get(Project, ship.project_id)
     project_items = sorted(
         db.query(ItpItem).filter(ItpItem.project_id == ship.project_id, ItpItem.active == True).all(),
@@ -1296,7 +1353,7 @@ def unfinished_before_sea_trial(ship_id: int, db: Session = Depends(get_db)):
     inspection_items = [
         item
         for item in project_items
-        if item.is_inspection and item.before_sea_trial and item.level == 5
+        if item.is_inspection and item.level == 5 and (scope != "before_sea_trial" or item.before_sea_trial)
     ]
     progress_rows = db.query(ShipProgress).filter(ShipProgress.ship_id == ship_id).all()
     progress_by_uid = {row.item_uid: row for row in progress_rows if row.item_uid}
@@ -1368,13 +1425,303 @@ def unfinished_before_sea_trial(ship_id: int, db: Session = Depends(get_db)):
         "ship_id": ship.id,
         "hull_no": ship.hull_no,
         "ship_name": ship.name,
-        "scope": "before_sea_trial",
+        "scope": scope,
+        "title": scope_config["title"],
+        "summary_total_label": scope_config["summary_total_label"],
+        "empty_text": scope_config["empty_text"],
+        "filename_scope": scope_config["filename_scope"],
         "done": done,
         "total": total,
         "open": open_count,
         "percent": round((done / total) * 100) if total else 0,
         "groups": groups,
     }
+
+
+def before_sea_trial_open_items_data(ship_id: int, db: Session) -> dict:
+    return ship_open_items_data(ship_id, db, "before_sea_trial")
+
+
+def before_delivery_open_items_data(ship_id: int, db: Session) -> dict:
+    return ship_open_items_data(ship_id, db, "before_delivery")
+
+
+@app.get("/api/ships/{ship_id}/unfinished-before-sea-trial")
+def unfinished_before_sea_trial(ship_id: int, db: Session = Depends(get_db)):
+    return before_sea_trial_open_items_data(ship_id, db)
+
+
+@app.get("/api/ships/{ship_id}/unfinished-before-delivery")
+def unfinished_before_delivery(ship_id: int, db: Session = Depends(get_db)):
+    return before_delivery_open_items_data(ship_id, db)
+
+
+def pdf_paragraph(value: str | None, style: ParagraphStyle) -> Paragraph:
+    text = str(value or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return Paragraph(text, style)
+
+
+def add_pdf_footer(canvas, doc):
+    canvas.saveState()
+    canvas.setFont(pdf_font_name(), 8)
+    canvas.setFillColor(colors.HexColor("#64748b"))
+    canvas.drawString(18 * mm, 12 * mm, "JN VLEC Project ITP Database - PG Newbuilding")
+    canvas.drawRightString(A4[0] - 18 * mm, 12 * mm, f"Page {doc.page}")
+    canvas.restoreState()
+
+
+def build_open_items_pdf(data: dict) -> BytesIO:
+    font_name = pdf_font_name()
+    output = BytesIO()
+    doc = SimpleDocTemplate(
+        output,
+        pagesize=A4,
+        rightMargin=16 * mm,
+        leftMargin=16 * mm,
+        topMargin=16 * mm,
+        bottomMargin=18 * mm,
+        title=f"{data['hull_no']} {data['title']}",
+    )
+
+    base_styles = getSampleStyleSheet()
+    styles = {
+        "title": ParagraphStyle(
+            "ITPTitle",
+            parent=base_styles["Title"],
+            fontName=font_name,
+            fontSize=21,
+            leading=25,
+            alignment=TA_CENTER,
+            textColor=colors.HexColor("#0f172a"),
+            spaceAfter=6,
+        ),
+        "hull": ParagraphStyle(
+            "ITPHull",
+            parent=base_styles["Title"],
+            fontName=font_name,
+            fontSize=18,
+            leading=22,
+            alignment=TA_CENTER,
+            textColor=colors.HexColor("#174ea6"),
+        ),
+        "ship_name": ParagraphStyle(
+            "ITPShipName",
+            parent=base_styles["Normal"],
+            fontName=font_name,
+            fontSize=14,
+            leading=18,
+            alignment=TA_CENTER,
+            textColor=colors.HexColor("#334155"),
+        ),
+        "label": ParagraphStyle(
+            "ITPLabel",
+            parent=base_styles["Normal"],
+            fontName=font_name,
+            fontSize=8,
+            leading=10,
+            textColor=colors.HexColor("#64748b"),
+        ),
+        "project": ParagraphStyle(
+            "ITPProject",
+            parent=base_styles["Normal"],
+            fontName=font_name,
+            fontSize=15,
+            leading=19,
+            textColor=colors.HexColor("#0f172a"),
+        ),
+        "subtitle": ParagraphStyle(
+            "ITPSubtitle",
+            parent=base_styles["Normal"],
+            fontName=font_name,
+            fontSize=9,
+            leading=12,
+            alignment=TA_CENTER,
+            textColor=colors.HexColor("#475569"),
+            spaceAfter=12,
+        ),
+        "section": ParagraphStyle(
+            "ITPSection",
+            parent=base_styles["Heading2"],
+            fontName=font_name,
+            fontSize=12,
+            leading=15,
+            textColor=colors.HexColor("#0f766e"),
+            spaceBefore=8,
+            spaceAfter=5,
+        ),
+        "subsection": ParagraphStyle(
+            "ITPSubsection",
+            parent=base_styles["Heading3"],
+            fontName=font_name,
+            fontSize=10,
+            leading=13,
+            textColor=colors.HexColor("#334155"),
+            spaceBefore=5,
+            spaceAfter=3,
+        ),
+        "cell": ParagraphStyle(
+            "ITPCell",
+            parent=base_styles["Normal"],
+            fontName=font_name,
+            fontSize=8,
+            leading=10,
+            textColor=colors.HexColor("#1f2937"),
+        ),
+        "header": ParagraphStyle(
+            "ITPHeaderCell",
+            parent=base_styles["Normal"],
+            fontName=font_name,
+            fontSize=8,
+            leading=10,
+            textColor=colors.HexColor("#1e3a8a"),
+        ),
+    }
+
+    exported_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+    logo_path = pg_logo_path()
+    logo = ReportLabImage(logo_path, width=28 * mm, height=24 * mm) if logo_path else ""
+    header = Table(
+        [
+            [
+                logo,
+                [
+                    pdf_paragraph(data["title"], styles["title"]),
+                    pdf_paragraph(f"Exported at {exported_at}", styles["subtitle"]),
+                ],
+            ]
+        ],
+        colWidths=[34 * mm, 142 * mm],
+    )
+    header.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("ALIGN", (0, 0), (0, 0), "LEFT"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]
+        )
+    )
+    ship_name = data.get("ship_name") or "Unnamed ship"
+    info_card = Table(
+        [
+            [
+                [pdf_paragraph("PROJECT", styles["label"]), pdf_paragraph(data["project_name"], styles["project"])],
+                [pdf_paragraph(data["hull_no"], styles["hull"]), pdf_paragraph(ship_name, styles["ship_name"])],
+            ]
+        ],
+        colWidths=[88 * mm, 88 * mm],
+    )
+    info_card.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#eff6ff")),
+                ("BOX", (0, 0), (-1, -1), 0.7, colors.HexColor("#bfdbfe")),
+                ("LINEBEFORE", (1, 0), (1, 0), 0.5, colors.HexColor("#bfdbfe")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 8),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+                ("LEFTPADDING", (0, 0), (-1, -1), 10),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+            ]
+        )
+    )
+
+    story = [header, info_card, Spacer(1, 10)]
+
+    summary = Table(
+        [
+            ["Open Items", data["summary_total_label"], "Completed", "Completion"],
+            [str(data["open"]), str(data["total"]), str(data["done"]), f"{data['percent']}%"],
+        ],
+        colWidths=[38 * mm, 48 * mm, 38 * mm, 38 * mm],
+        hAlign="CENTER",
+    )
+    summary.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f766e")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("BACKGROUND", (0, 1), (-1, 1), colors.HexColor("#ecfeff")),
+                ("TEXTCOLOR", (0, 1), (-1, 1), colors.HexColor("#0f172a")),
+                ("FONTNAME", (0, 0), (-1, -1), font_name),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#bae6fd")),
+                ("TOPPADDING", (0, 0), (-1, -1), 7),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+            ]
+        )
+    )
+    story.extend([summary, Spacer(1, 8)])
+
+    if not data["groups"]:
+        story.append(pdf_paragraph(data["empty_text"], styles["section"]))
+    for group in data["groups"]:
+        story.append(pdf_paragraph(f"{group['code']} - {group['title_en']} ({group['open_count']} open)", styles["section"]))
+        for subgroup in group["groups"]:
+            story.append(pdf_paragraph(f"{subgroup['code']} - {subgroup['title_en']} ({subgroup['open_count']} open)", styles["subsection"]))
+            rows = [
+                [
+                    pdf_paragraph("Code", styles["header"]),
+                    pdf_paragraph("English Description", styles["header"]),
+                    pdf_paragraph("Chinese Description", styles["header"]),
+                    pdf_paragraph("Status", styles["header"]),
+                ]
+            ]
+            for item in subgroup["items"]:
+                rows.append(
+                    [
+                        pdf_paragraph(item["code"], styles["cell"]),
+                        pdf_paragraph(item["title_en"], styles["cell"]),
+                        pdf_paragraph(item.get("title_zh"), styles["cell"]),
+                        pdf_paragraph(item["status"].replace("_", " ").title(), styles["cell"]),
+                    ]
+                )
+            table = Table(rows, colWidths=[24 * mm, 70 * mm, 58 * mm, 24 * mm], repeatRows=1)
+            table.setStyle(
+                TableStyle(
+                    [
+                        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#dbeafe")),
+                        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#cbd5e1")),
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                        ("TOPPADDING", (0, 0), (-1, -1), 5),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#eff6ff")]),
+                    ]
+                )
+            )
+            story.extend([table, Spacer(1, 6)])
+
+    doc.build(story, onFirstPage=add_pdf_footer, onLaterPages=add_pdf_footer)
+    output.seek(0)
+    return output
+
+
+def open_items_pdf_response(data: dict) -> StreamingResponse:
+    output = build_open_items_pdf(data)
+    filename = f"{data['hull_no']} {data['filename_scope']}.pdf"
+    encoded = quote(filename)
+    return StreamingResponse(
+        output,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded}"},
+    )
+
+
+@app.get("/api/ships/{ship_id}/unfinished-before-sea-trial/export.pdf")
+def export_unfinished_before_sea_trial_pdf(ship_id: int, db: Session = Depends(get_db)):
+    return open_items_pdf_response(before_sea_trial_open_items_data(ship_id, db))
+
+
+@app.get("/api/ships/{ship_id}/unfinished-before-delivery/export.pdf")
+def export_unfinished_before_delivery_pdf(ship_id: int, db: Session = Depends(get_db)):
+    return open_items_pdf_response(before_delivery_open_items_data(ship_id, db))
 
 
 @app.post("/api/history/{audit_id}/rollback", dependencies=[Depends(require_admin)])

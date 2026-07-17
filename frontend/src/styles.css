@@ -47,6 +47,19 @@ body {
   margin: 0 0 6px;
 }
 
+.login-brand {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  text-align: center;
+}
+
+.login-brand img {
+  height: 68px;
+  object-fit: contain;
+  width: 98px;
+}
+
 .login-panel p {
   color: #536170;
   margin: 0;
@@ -153,6 +166,24 @@ code {
   justify-content: space-between;
   margin: 0 auto 18px;
   max-width: 1180px;
+}
+
+.brand-lockup {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  min-width: 0;
+}
+
+.brand-lockup img {
+  background: white;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
+  height: 54px;
+  object-fit: contain;
+  padding: 6px;
+  width: 78px;
 }
 
 .topbar h1 {
@@ -471,7 +502,7 @@ code {
 
 .edit-card .ship-card-title {
   align-items: center;
-  min-height: 92px;
+  min-height: 72px;
 }
 
 .edit-card .ship-card-title h3 {
@@ -488,6 +519,20 @@ code {
   border-color: #38bdf8;
   box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
   transform: translateY(-1px);
+}
+
+.main-card-progress {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.main-card-progress strong {
+  color: #166534;
+  font-size: 13px;
+  min-width: 42px;
+  text-align: right;
 }
 
 .editing-context {
@@ -1176,6 +1221,11 @@ h2 {
   .topbar {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .brand-lockup img {
+    height: 46px;
+    width: 66px;
   }
 
   .selector-band {

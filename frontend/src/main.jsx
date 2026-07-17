@@ -24,6 +24,7 @@ import {
 import "./styles.css";
 
 const API = "/api";
+const APP_BASE = import.meta.env.BASE_URL || "/";
 
 function headers(token, contentType = true) {
   return {
@@ -75,8 +76,8 @@ function App() {
   const [progress, setProgress] = useState([]);
   const [historyRows, setHistoryRows] = useState([]);
   const [overview, setOverview] = useState(null);
-  const [seaTrialDetail, setSeaTrialDetail] = useState(null);
-  const [seaTrialDetailShipId, setSeaTrialDetailShipId] = useState(null);
+  const [openItemsDetail, setOpenItemsDetail] = useState(null);
+  const [openItemsDetailKey, setOpenItemsDetailKey] = useState("");
   const [message, setMessage] = useState("");
   const [preview, setPreview] = useState(null);
   const [selectedFile, setSelectedFile] = useState(null);
@@ -180,14 +181,16 @@ function App() {
     setOverview(await request("/overview"));
   }
 
-  async function loadSeaTrialDetail(ship) {
-    if (String(seaTrialDetailShipId) === String(ship.ship_id)) {
-      setSeaTrialDetailShipId(null);
-      setSeaTrialDetail(null);
+  async function loadOpenItemsDetail(ship, scope) {
+    const nextKey = `${ship.ship_id}:${scope}`;
+    if (openItemsDetailKey === nextKey) {
+      setOpenItemsDetailKey("");
+      setOpenItemsDetail(null);
       return;
     }
-    setSeaTrialDetailShipId(ship.ship_id);
-    setSeaTrialDetail(await request(`/ships/${ship.ship_id}/unfinished-before-sea-trial`));
+    const endpoint = scope === "before_delivery" ? "unfinished-before-delivery" : "unfinished-before-sea-trial";
+    setOpenItemsDetailKey(nextKey);
+    setOpenItemsDetail(await request(`/ships/${ship.ship_id}/${endpoint}`));
   }
 
   function startMainShipEdit(ship) {
@@ -365,6 +368,17 @@ function App() {
     link.click();
     link.remove();
     window.URL.revokeObjectURL(url);
+  }
+
+  function exportOpenItemsPdf(detail) {
+    const endpoint = detail.scope === "before_delivery" ? "unfinished-before-delivery" : "unfinished-before-sea-trial";
+    const link = document.createElement("a");
+    link.href = `${API}/ships/${detail.ship_id}/${endpoint}/export.pdf`;
+    link.download = `${detail.hull_no} ${detail.filename_scope || detail.title}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setMessage(`Exporting PDF for ${detail.hull_no}.`);
   }
 
   async function importShipRecords(ship, file) {
@@ -699,7 +713,8 @@ function App() {
     return (
       <main className="login-shell">
         <section className="login-panel">
-          <div>
+          <div className="login-brand">
+            <img src={`${APP_BASE}pg-logo.png`} alt="PG" />
             <h1>JN VLEC Project ITP Database</h1>
             <p>Enter password to continue.</p>
           </div>
@@ -726,9 +741,12 @@ function App() {
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div>
+        <div className="brand-lockup">
+          <img src={`${APP_BASE}pg-logo.png`} alt="PG" />
+          <div>
           <h1>JN VLEC Project ITP Database</h1>
           <p>PG Newbuilding</p>
+          </div>
         </div>
         <nav className="nav-panel">
           <button className={page === "overview" ? "nav-active" : ""} onClick={() => setPage("overview")}><BarChart3 size={16} /> Overview</button>
@@ -755,7 +773,7 @@ function App() {
             </div>
             <div className="ship-card-grid">
               {overviewShips.map((ship) => (
-                <article className={`ship-card ${String(seaTrialDetailShipId) === String(ship.ship_id) ? "selected" : ""}`} key={ship.ship_id}>
+                <article className={`ship-card ${openItemsDetailKey.startsWith(`${ship.ship_id}:`) ? "selected" : ""}`} key={ship.ship_id}>
                   <div className="ship-card-title">
                     <div>
                       <h3>{ship.hull_no}</h3>
@@ -774,7 +792,7 @@ function App() {
                       action: (
                         <button
                           className="soft-button compact-button"
-                          onClick={() => loadSeaTrialDetail(ship).catch((error) => setMessage(error.message))}
+                          onClick={() => loadOpenItemsDetail(ship, "before_sea_trial").catch((error) => setMessage(error.message))}
                           disabled={!ship.before_sea_trial_total}
                         >
                           <Eye size={14} /> Open Items
@@ -788,21 +806,38 @@ function App() {
                     ship.completion_total,
                     ship.completion_percent,
                     ship.completion_open ?? Math.max(ship.completion_total - ship.completion_done, 0),
+                    {
+                      action: (
+                        <button
+                          className="soft-button compact-button"
+                          onClick={() => loadOpenItemsDetail(ship, "before_delivery").catch((error) => setMessage(error.message))}
+                          disabled={!ship.completion_total}
+                        >
+                          <Eye size={14} /> Open Items
+                        </button>
+                      ),
+                    },
                   )}
                 </article>
               ))}
             </div>
-            {seaTrialDetail && (
+            {openItemsDetail && (
               <aside className="sea-trial-detail">
                 <div className="panel-title">
-                  <h2>{seaTrialDetail.hull_no} - Before Sea Trial Open Items</h2>
-                  <span>{seaTrialDetail.open} open / {seaTrialDetail.total} total</span>
+                  <h2>{openItemsDetail.hull_no} - {openItemsDetail.title}</h2>
+                  <span>{openItemsDetail.open} open / {openItemsDetail.total} total</span>
+                  <button
+                    className="soft-button compact-button"
+                    onClick={() => exportOpenItemsPdf(openItemsDetail)}
+                  >
+                    <Download size={14} /> Export PDF
+                  </button>
                 </div>
-                {seaTrialDetail.groups.length === 0 ? (
-                  <div className="empty-state compact">No open items before sea trial.</div>
+                {openItemsDetail.groups.length === 0 ? (
+                  <div className="empty-state compact">{openItemsDetail.empty_text}</div>
                 ) : (
                   <div className="open-group-list">
-                    {seaTrialDetail.groups.map((group) => (
+                    {openItemsDetail.groups.map((group) => (
                       <section className="open-group" key={group.code}>
                         <h3>{group.code} <span>{group.title_en}</span><small>{group.open_count}</small></h3>
                         {group.groups.map((subgroup) => (
@@ -852,6 +887,12 @@ function App() {
                           <span>{ship.ship_name || "Unnamed ship"}</span>
                         </div>
                         <small>{ship.project_name}</small>
+                      </div>
+                      <div className="main-card-progress" aria-label={`${ship.completion_percent}%`}>
+                        <div className="progress-track">
+                          <div className="progress-fill" style={{ width: `${ship.completion_percent}%` }} />
+                        </div>
+                        <strong>{ship.completion_percent}%</strong>
                       </div>
                     </article>
                   ))}
