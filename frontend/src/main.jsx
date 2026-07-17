@@ -55,6 +55,10 @@ function collectInspectionChildren(node) {
   return flattenTree(node.children || []).filter((item) => item.active !== false && item.is_inspection);
 }
 
+function collectDescendantIds(node) {
+  return (node.children || []).flatMap((child) => [child.id, ...collectDescendantIds(child)]);
+}
+
 function App() {
   const [role, setRole] = useState("admin");
   const [user, setUser] = useState("yard-user");
@@ -91,6 +95,19 @@ function App() {
   const [adminExpanded, setAdminExpanded] = useState({});
 
   const flatTree = useMemo(() => flattenTree(tree), [tree]);
+  const flatTreeById = useMemo(() => new Map(flatTree.map((item) => [item.id, item])), [flatTree]);
+  const visibleAdminTreeItems = useMemo(
+    () => flatTree.filter((item) => {
+      if (!showInactive && item.active === false) return false;
+      let parentId = item.parent_id;
+      while (parentId) {
+        if (!adminExpanded[parentId]) return false;
+        parentId = flatTreeById.get(parentId)?.parent_id;
+      }
+      return true;
+    }),
+    [adminExpanded, flatTree, flatTreeById, showInactive],
+  );
   const inactiveChildrenByParent = useMemo(() => {
     const children = {};
     for (const item of inactiveItems) {
@@ -619,6 +636,30 @@ function App() {
     );
   }
 
+  function toggleMainGroup(group) {
+    setExpanded((current) => {
+      if (!current[group.id]) return { ...current, [group.id]: true };
+      const next = { ...current };
+      delete next[group.id];
+      for (const descendantId of collectDescendantIds(group)) {
+        delete next[descendantId];
+      }
+      return next;
+    });
+  }
+
+  function toggleAdminItem(item) {
+    setAdminExpanded((current) => {
+      if (!current[item.id]) return { ...current, [item.id]: true };
+      const next = { ...current };
+      delete next[item.id];
+      for (const descendantId of collectDescendantIds(item)) {
+        delete next[descendantId];
+      }
+      return next;
+    });
+  }
+
   function renderMainGroup(group) {
     const inspectionItems = collectInspectionChildren(group);
     const completeCount = inspectionItems.filter((item) => progressByItem[item.id]?.status === "done").length;
@@ -631,7 +672,7 @@ function App() {
         <button
           className={`category-header level-${group.level}`}
           style={{ "--level-indent": `${levelIndent}px` }}
-          onClick={() => setExpanded({ ...expanded, [group.id]: !isOpen })}
+          onClick={() => toggleMainGroup(group)}
         >
           {isOpen ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
           <code>{group.code}</code>
@@ -922,8 +963,7 @@ function App() {
                 <button onClick={() => addItem().catch((error) => setMessage(error.message))}><Plus size={16} /></button>
               </div>
               <div className="tree-list">
-                {flatTree
-                  .filter((item) => (showInactive || item.active !== false) && (item.depth === 0 || adminExpanded[item.parent_id]))
+                {visibleAdminTreeItems
                   .map((item) => {
                     const hasChildren = flatTree.some((candidate) => candidate.parent_id === item.id);
                     const isOpen = adminExpanded[item.id] ?? false;
@@ -934,7 +974,7 @@ function App() {
                           className={`tree-row ${item.is_inspection ? "leaf" : ""} ${hasChildren ? "clickable" : ""} ${item.active === false ? "inactive" : ""}`}
                           style={{ paddingLeft: `${12 + item.depth * 22}px` }}
                           onClick={() => {
-                            if (hasChildren) setAdminExpanded({ ...adminExpanded, [item.id]: !isOpen });
+                            if (hasChildren) toggleAdminItem(item);
                           }}
                           title={hasChildren ? "Click to expand or collapse" : undefined}
                         >
