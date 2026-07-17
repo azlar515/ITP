@@ -233,14 +233,19 @@ def pdf_font_name() -> str:
     if PDF_FONT_CACHE:
         return PDF_FONT_CACHE
     candidates = [
-        r"C:\Windows\Fonts\msyh.ttc",
-        r"C:\Windows\Fonts\simsun.ttc",
+        os.environ.get("PDF_FONT_PATH"),
+        "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+        r"C:\Windows\Fonts\simhei.ttf",
+        r"C:\Windows\Fonts\Deng.ttf",
+        r"C:\Windows\Fonts\Noto Sans SC (TrueType).otf",
         "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        r"C:\Windows\Fonts\msyh.ttc",
+        r"C:\Windows\Fonts\simsun.ttc",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     ]
     for path in candidates:
-        if os.path.exists(path):
+        if path and os.path.exists(path):
             try:
                 pdfmetrics.registerFont(TTFont("ITPFont", path))
                 PDF_FONT_CACHE = "ITPFont"
