@@ -1468,7 +1468,7 @@ def pdf_paragraph(value: str | None, style: ParagraphStyle) -> Paragraph:
 
 def add_pdf_footer(canvas, doc):
     canvas.saveState()
-    canvas.setFont(pdf_font_name(), 8)
+    canvas.setFont("Helvetica", 8)
     canvas.setFillColor(colors.HexColor("#64748b"))
     canvas.drawString(18 * mm, 12 * mm, "JN VLEC Project ITP Database - PG Newbuilding")
     canvas.drawRightString(A4[0] - 18 * mm, 12 * mm, f"Page {doc.page}")
@@ -1476,7 +1476,9 @@ def add_pdf_footer(canvas, doc):
 
 
 def build_open_items_pdf(data: dict) -> BytesIO:
-    font_name = pdf_font_name()
+    cjk_font_name = pdf_font_name()
+    latin_font_name = "Helvetica"
+    latin_bold_font_name = "Helvetica-Bold"
     output = BytesIO()
     doc = SimpleDocTemplate(
         output,
@@ -1493,7 +1495,7 @@ def build_open_items_pdf(data: dict) -> BytesIO:
         "title": ParagraphStyle(
             "ITPTitle",
             parent=base_styles["Title"],
-            fontName=font_name,
+            fontName=latin_bold_font_name,
             fontSize=21,
             leading=25,
             alignment=TA_CENTER,
@@ -1503,7 +1505,7 @@ def build_open_items_pdf(data: dict) -> BytesIO:
         "hull": ParagraphStyle(
             "ITPHull",
             parent=base_styles["Title"],
-            fontName=font_name,
+            fontName=latin_bold_font_name,
             fontSize=18,
             leading=22,
             alignment=TA_CENTER,
@@ -1512,7 +1514,7 @@ def build_open_items_pdf(data: dict) -> BytesIO:
         "ship_name": ParagraphStyle(
             "ITPShipName",
             parent=base_styles["Normal"],
-            fontName=font_name,
+            fontName=latin_font_name,
             fontSize=14,
             leading=18,
             alignment=TA_CENTER,
@@ -1521,7 +1523,7 @@ def build_open_items_pdf(data: dict) -> BytesIO:
         "label": ParagraphStyle(
             "ITPLabel",
             parent=base_styles["Normal"],
-            fontName=font_name,
+            fontName=latin_bold_font_name,
             fontSize=8,
             leading=10,
             textColor=colors.HexColor("#64748b"),
@@ -1529,7 +1531,7 @@ def build_open_items_pdf(data: dict) -> BytesIO:
         "project": ParagraphStyle(
             "ITPProject",
             parent=base_styles["Normal"],
-            fontName=font_name,
+            fontName=latin_font_name,
             fontSize=15,
             leading=19,
             textColor=colors.HexColor("#0f172a"),
@@ -1537,7 +1539,7 @@ def build_open_items_pdf(data: dict) -> BytesIO:
         "subtitle": ParagraphStyle(
             "ITPSubtitle",
             parent=base_styles["Normal"],
-            fontName=font_name,
+            fontName=latin_font_name,
             fontSize=9,
             leading=12,
             alignment=TA_CENTER,
@@ -1547,7 +1549,7 @@ def build_open_items_pdf(data: dict) -> BytesIO:
         "section": ParagraphStyle(
             "ITPSection",
             parent=base_styles["Heading2"],
-            fontName=font_name,
+            fontName=latin_bold_font_name,
             fontSize=12,
             leading=15,
             textColor=colors.HexColor("#0f766e"),
@@ -1557,7 +1559,7 @@ def build_open_items_pdf(data: dict) -> BytesIO:
         "subsection": ParagraphStyle(
             "ITPSubsection",
             parent=base_styles["Heading3"],
-            fontName=font_name,
+            fontName=latin_bold_font_name,
             fontSize=10,
             leading=13,
             textColor=colors.HexColor("#334155"),
@@ -1567,7 +1569,15 @@ def build_open_items_pdf(data: dict) -> BytesIO:
         "cell": ParagraphStyle(
             "ITPCell",
             parent=base_styles["Normal"],
-            fontName=font_name,
+            fontName=latin_font_name,
+            fontSize=8,
+            leading=10,
+            textColor=colors.HexColor("#1f2937"),
+        ),
+        "cell_zh": ParagraphStyle(
+            "ITPCellZh",
+            parent=base_styles["Normal"],
+            fontName=cjk_font_name,
             fontSize=8,
             leading=10,
             textColor=colors.HexColor("#1f2937"),
@@ -1575,7 +1585,7 @@ def build_open_items_pdf(data: dict) -> BytesIO:
         "header": ParagraphStyle(
             "ITPHeaderCell",
             parent=base_styles["Normal"],
-            fontName=font_name,
+            fontName=latin_bold_font_name,
             fontSize=8,
             leading=10,
             textColor=colors.HexColor("#1e3a8a"),
@@ -1651,7 +1661,7 @@ def build_open_items_pdf(data: dict) -> BytesIO:
                 ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
                 ("BACKGROUND", (0, 1), (-1, 1), colors.HexColor("#ecfeff")),
                 ("TEXTCOLOR", (0, 1), (-1, 1), colors.HexColor("#0f172a")),
-                ("FONTNAME", (0, 0), (-1, -1), font_name),
+                ("FONTNAME", (0, 0), (-1, -1), latin_font_name),
                 ("FONTSIZE", (0, 0), (-1, -1), 9),
                 ("ALIGN", (0, 0), (-1, -1), "CENTER"),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
@@ -1682,7 +1692,7 @@ def build_open_items_pdf(data: dict) -> BytesIO:
                     [
                         pdf_paragraph(item["code"], styles["cell"]),
                         pdf_paragraph(item["title_en"], styles["cell"]),
-                        pdf_paragraph(item.get("title_zh"), styles["cell"]),
+                        pdf_paragraph(item.get("title_zh"), styles["cell_zh"]),
                         pdf_paragraph(item["status"].replace("_", " ").title(), styles["cell"]),
                     ]
                 )
