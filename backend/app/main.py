@@ -849,6 +849,8 @@ def export_ship_records(ship_id: int, db: Session = Depends(get_db)):
     progress_rows = db.query(ShipProgress).filter(ShipProgress.ship_id == ship_id).all()
     progress_by_uid = {row.item_uid: row for row in progress_rows if row.item_uid}
     progress_by_item = {row.itp_item_id: row for row in progress_rows}
+    item_by_uid = {item.item_uid: item for item in items if item.item_uid}
+    item_by_code = {item.code: item for item in items}
 
     workbook = Workbook()
     current_sheet = workbook.active
@@ -864,6 +866,7 @@ def export_ship_records(ship_id: int, db: Session = Depends(get_db)):
         "Current Code",
         "Chinese Description",
         "English Description",
+        "Items Before Sea Trial",
         "Status",
         "Notes",
         "Updated By",
@@ -887,6 +890,7 @@ def export_ship_records(ship_id: int, db: Session = Depends(get_db)):
                 item.code,
                 item.title_zh,
                 item.title_en,
+                "Y" if item.before_sea_trial else "",
                 current.status if current else "not_started",
                 current.notes if current else None,
                 current.updated_by if current else None,
@@ -909,6 +913,7 @@ def export_ship_records(ship_id: int, db: Session = Depends(get_db)):
         "Code Snapshot",
         "Chinese Description Snapshot",
         "English Description Snapshot",
+        "Items Before Sea Trial",
         "Status Before",
         "Status After",
         "Notes",
@@ -917,6 +922,7 @@ def export_ship_records(ship_id: int, db: Session = Depends(get_db)):
     events_sheet.append(event_headers)
     events = db.query(ShipProgressEvent).filter(ShipProgressEvent.ship_id == ship_id).order_by(ShipProgressEvent.created_at, ShipProgressEvent.id).all()
     for event in events:
+        event_item = item_by_uid.get(event.item_uid) or item_by_code.get(event.code_snapshot)
         events_sheet.append(
             [
                 event.id,
@@ -930,6 +936,7 @@ def export_ship_records(ship_id: int, db: Session = Depends(get_db)):
                 event.code_snapshot,
                 event.title_zh_snapshot,
                 event.title_en_snapshot,
+                "Y" if event_item and event_item.before_sea_trial else "",
                 event.status_before,
                 event.status_after,
                 event.notes,
