@@ -1508,6 +1508,26 @@ def pdf_paragraph(value: str | None, style: ParagraphStyle) -> Paragraph:
     return Paragraph(text, style)
 
 
+def pdf_mixed_paragraph(value: str | None, style: ParagraphStyle, latin_font_name: str, cjk_font_name: str) -> Paragraph:
+    escaped = str(value or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    runs: list[str] = []
+    current_font: str | None = None
+    current_text: list[str] = []
+    for char in escaped:
+        is_cjk = "\u4e00" <= char <= "\u9fff" or "\u3000" <= char <= "\u303f" or "\uff00" <= char <= "\uffef"
+        font_name = cjk_font_name if is_cjk else latin_font_name
+        if current_font is None:
+            current_font = font_name
+        if font_name != current_font:
+            runs.append(f'<font name="{current_font}">{"".join(current_text)}</font>')
+            current_text = []
+            current_font = font_name
+        current_text.append(char)
+    if current_text and current_font:
+        runs.append(f'<font name="{current_font}">{"".join(current_text)}</font>')
+    return Paragraph("".join(runs), style)
+
+
 def add_pdf_footer(canvas, doc):
     latin_font_name, _ = pdf_latin_font_names()
     canvas.saveState()
@@ -1734,7 +1754,7 @@ def build_open_items_pdf(data: dict) -> BytesIO:
                     [
                         pdf_paragraph(item["code"], styles["cell"]),
                         pdf_paragraph(item["title_en"], styles["cell"]),
-                        pdf_paragraph(item.get("title_zh"), styles["cell_zh"]),
+                        pdf_mixed_paragraph(item.get("title_zh"), styles["cell_zh"], latin_font_name, cjk_font_name),
                         pdf_paragraph(item["status"].replace("_", " ").title(), styles["cell"]),
                     ]
                 )
