@@ -181,6 +181,7 @@ def login(payload: LoginRequest):
 
 CODE_PART_RE = re.compile(r"\d+|\D+")
 PDF_FONT_CACHE: str | None = None
+PDF_LATIN_FONT_CACHE: tuple[str, str] | None = None
 
 
 def natural_code_key(code: str | None) -> tuple:
@@ -254,6 +255,47 @@ def pdf_font_name() -> str:
                 continue
     PDF_FONT_CACHE = "Helvetica"
     return "Helvetica"
+
+
+def pdf_latin_font_names() -> tuple[str, str]:
+    global PDF_LATIN_FONT_CACHE
+    if PDF_LATIN_FONT_CACHE:
+        return PDF_LATIN_FONT_CACHE
+    regular_candidates = [
+        os.environ.get("PDF_LATIN_FONT_PATH"),
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        r"C:\Windows\Fonts\DejaVuSans.ttf",
+        r"C:\Windows\Fonts\arial.ttf",
+    ]
+    bold_candidates = [
+        os.environ.get("PDF_LATIN_BOLD_FONT_PATH"),
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        r"C:\Windows\Fonts\DejaVuSans-Bold.ttf",
+        r"C:\Windows\Fonts\arialbd.ttf",
+    ]
+
+    regular_name = "Helvetica"
+    for path in regular_candidates:
+        if path and os.path.exists(path):
+            try:
+                pdfmetrics.registerFont(TTFont("ITPLatin", path))
+                regular_name = "ITPLatin"
+                break
+            except Exception:
+                continue
+
+    bold_name = "Helvetica-Bold"
+    for path in bold_candidates:
+        if path and os.path.exists(path):
+            try:
+                pdfmetrics.registerFont(TTFont("ITPLatinBold", path))
+                bold_name = "ITPLatinBold"
+                break
+            except Exception:
+                continue
+
+    PDF_LATIN_FONT_CACHE = (regular_name, bold_name)
+    return PDF_LATIN_FONT_CACHE
 
 
 def pg_logo_path() -> str | None:
@@ -1467,8 +1509,9 @@ def pdf_paragraph(value: str | None, style: ParagraphStyle) -> Paragraph:
 
 
 def add_pdf_footer(canvas, doc):
+    latin_font_name, _ = pdf_latin_font_names()
     canvas.saveState()
-    canvas.setFont("Helvetica", 8)
+    canvas.setFont(latin_font_name, 8)
     canvas.setFillColor(colors.HexColor("#64748b"))
     canvas.drawString(18 * mm, 12 * mm, "JN VLEC Project ITP Database - PG Newbuilding")
     canvas.drawRightString(A4[0] - 18 * mm, 12 * mm, f"Page {doc.page}")
@@ -1477,8 +1520,7 @@ def add_pdf_footer(canvas, doc):
 
 def build_open_items_pdf(data: dict) -> BytesIO:
     cjk_font_name = pdf_font_name()
-    latin_font_name = "Helvetica"
-    latin_bold_font_name = "Helvetica-Bold"
+    latin_font_name, latin_bold_font_name = pdf_latin_font_names()
     output = BytesIO()
     doc = SimpleDocTemplate(
         output,
